@@ -1,0 +1,135 @@
+"""Unit tests for the printer-independent steps."""
+
+from __future__ import annotations
+
+from pylooprint.core.config_block import config_value, parse_config_block
+from pylooprint.core.jsnum import number_to_string, to_fixed
+from pylooprint.core.placement import determine_model_placement
+from pylooprint.core.structure import extract_original_tool_command, split_gcode, strip_slicer_end_code
+from pylooprint.core.template import render_start_code, resolve_max_layer_z
+from pylooprint.core.variables import extract_variable_values
+
+CONFIG = """; CONFIG_BLOCK_START
+; curr_bed_type = Textured PEI Plate
+; filament_type = PLA
+; initial_extruder = 0
+; nozzle_temperature_initial_layer = 220
+; filament_max_volumetric_speed = 21
+; bed_temperature_initial_layer_single = 60
+; CONFIG_BLOCK_END"""
+
+
+def test_parse_config_block_splits_comma_separated_lists():
+    config = parse_config_block('; a = 1,2,3\n; c = 7\n; d[1] = 9\n; e = say "hi", ok')
+    assert config["a"] == ["1", "2", "3"]
+    assert config["c"] == "7"
+    assert config["d"] == ["", "9"]
+    # A value carrying a quote is never split - that is how the slicer stores
+    # whole G-code snippets on one line.
+    assert config["e"] == 'say "hi", ok'
+
+
+def test_config_value_resolves_the_extruder_index():
+    config = parse_config_block("; nozzle_temperature = 200,230")
+    assert config_value(config, "nozzle_temperature", None, "1") == "230"
+    assert config_value(config, "nozzle_temperature", None, "0") == "200"
+
+
+def test_strip_slicer_end_code_cuts_at_the_last_date_marker():
+    gcode = "; print\n;===== date: 1 =====\nfoo\n;===== date: 2 =====\nbar"
+    assert strip_slicer_end_code(gcode) == "; print\n;===== date: 1 =====\nfoo"
+
+
+def test_split_gcode_separates_setup_from_the_print():
+    gcode = (
+        "; HEADER_BLOCK_START\n; max_z_height: 10\n; HEADER_BLOCK_END\n"
+        + CONFIG
+        + "\n; EXECUTABLE_BLOCK_START\nM73 P0\n; FEATURE: Custom\nT0\nM109 S220\n"
+        "; CHANGE_LAYER\nG1 X1 Y1 E1\n"
+    )
+    structure = split_gcode(gcode)
+    assert structure.setup.endswith("; FEATURE: Custom")
+    assert structure.print_body.startswith("; CHANGE_LAYER")
+    assert "; CONFIG_BLOCK_START" in structure.config
+    assert "; CONFIG_BLOCK_START" not in structure.header
+    assert structure.original_tool_command == "0"
+
+
+def test_extract_original_tool_command_ignores_temperatures_and_t255():
+    executable = "; FEATURE: Custom\nG28 Z P0 T300\nM620 S255\nT1\n; CHANGE_LAYER\n"
+    assert extract_original_tool_command(executable) == "1"
+
+
+def test_variables_fall_back_to_safe_defaults():
+    values = extract_variable_values("", "")
+    assert values["nozzle_temperature_initial_layer"] == "220"
+    assert values["bed_temperature_initial_layer_single"] == "60"
+    assert values["initial_extruder"] == "0"
+
+
+def test_variables_read_the_config_block():
+    values = extract_variable_values("", CONFIG)
+    assert values["filament_type"] == "PLA"
+    assert values["curr_bed_type"] == "Textured PEI Plate"
+    assert values["nozzle_temperature_range_high"] == "240"
+
+
+def test_start_code_substitution_covers_all_three_notations():
+    values = extract_variable_values("", CONFIG)
+    template = (
+        "M104 S[nozzle_temperature_initial_layer]\n"
+        "T[initial_extruder]\n"
+        "M109 S{nozzle_temperature_initial_layer[initial_extruder]-20}\n"
+        "M620.1 E F{filament_max_volumetric_speed[initial_extruder]/2.4053*60}\n"
+        '{if filament_type[initial_extruder]=="PLA"}\nM106 P3 S180\n{endif}\n'
+        'M220 S100 ;Reset Feedrate'
+    )
+    rendered = render_start_code(template, values, speed_mode=100)
+    assert "M104 S220" in rendered
+    assert "T0" in rendered
+    assert "M109 S200" in rendered
+    assert "M620.1 E F524" in rendered
+    assert "M106 P3 S180" in rendered
+    assert "M220 S100 ;Reset Feedrate (Looprint: 100% speed)" in rendered
+
+
+def test_pla_block_is_dropped_for_other_filaments():
+    values = extract_variable_values("", CONFIG.replace("filament_type = PLA", "filament_type = PETG"))
+    rendered = render_start_code(
+        '{if filament_type[initial_extruder]=="PLA"}\nM106 P3 S180\n{endif}', values, 100
+    )
+    assert "M106 P3 S180" not in rendered
+
+
+def test_z_drop_conditional_picks_the_branch_for_the_model_height():
+    template = "{if (max_layer_z ) > 41}\n    G1 Z{max_layer_z - 40} F600\n{else}\n    G1 Z1 F600\n{endif}"
+    assert "G1 Z1 F600" in resolve_max_layer_z(template, 18.12)
+    assert "G1 Z20.00 F600" in resolve_max_layer_z(template, 60.0)
+
+
+def test_max_layer_z_arithmetic_uses_two_decimals():
+    assert resolve_max_layer_z("G1 Z{max_layer_z + 0.5}", 18.12) == "G1 Z18.62"
+
+
+def test_placement_finds_a_centred_model():
+    lines = [f"G1 X{110 + i % 20} Y{110 + i % 20} Z5 E0.1" for i in range(200)]
+    placement = determine_model_placement("\n".join(lines), -13, 180, 0, 185)
+    assert placement.direction == "center"
+    assert placement.min_x == 110
+    assert placement.max_x == 129
+
+
+def test_placement_ignores_purge_and_wipe_moves():
+    """Prime lines at the bed edge and the nozzle wipe at X100 are not the model."""
+    lines = [f"G1 X{110 + i % 20} Y{110 + i % 20} Z5 E0.1" for i in range(200)]
+    lines += ["G1 X100 Y264 Z5 E0.1"] * 50  # wipe sequence
+    lines += ["G1 X20 Y10 Z0.2 E0.5"] * 50  # purge line at the edge
+    placement = determine_model_placement("\n".join(lines), -13, 180, 0, 185)
+    assert (placement.min_x, placement.max_x) == (110, 129)
+
+
+def test_javascript_number_formatting():
+    assert to_fixed(18.615, 2) == "18.62"
+    assert to_fixed(1.0, 1) == "1.0"
+    assert number_to_string(200.0) == "200"
+    assert number_to_string(2000) == "2000"
