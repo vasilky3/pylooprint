@@ -111,14 +111,26 @@ python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -n 20 -t 18 -o batch.gcode.3mf
 python -m pytest
 ```
 
-The suite is anchored on two outputs of the original web tool:
+The suite is anchored on real output of the original web tool:
 
-* **`test_a1_mini_golden.py`** rebuilds `2b_LP.gcode` from `2b_base.gcode`
-  (A1 Mini, 1 loop, 58 °C) and asserts it is **byte-for-byte identical** — that
-  pins the end-code stripping, both templates, variable substitution, placement
-  detection and the loop assembly at once.
-* the same file also compares the generated A1 Mini end code against the one
-  embedded in `Gcode/result.gcode.3mf`.
+* **`test_webtool_equivalence.py`** — `looprint/index.html` was run unmodified in
+  a browser on `Gcode/test 2 blocks.gcode.3mf` at three settings, and its output
+  frozen into `tests/golden/`. pylooprint regenerates each one and must match
+  **line for line**; the only permitted difference is the `; Generated:`
+  wall-clock timestamp, and a second test asserts that nothing else hides behind
+  that normalisation.
+
+  | Loops | Cool-down | Speed | Output |
+  |---|---|---|---|
+  | 3 | 18 °C | 100 % | 448 731 B / 21 046 lines |
+  | 5 | 30 °C | 124 % | 720 225 B |
+  | 2 | 25 °C | 166 % | 312 984 B |
+
+* **`test_a1_mini_golden.py`** rebuilds the archived `2b_LP.gcode` from
+  `2b_base.gcode` (A1 Mini, 1 loop, 58 °C) and asserts it is **byte-for-byte
+  identical** — a second, independently produced sample. It also compares the
+  generated A1 Mini end code against the one embedded in
+  `Gcode/result.gcode.3mf`.
 * **`test_loops.py`** runs `Gcode/result.gcode.3mf` through the pipeline at 1, 2
   and 5 loops and checks the per-loop structure.
 
