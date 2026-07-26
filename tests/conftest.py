@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))
 
 GCODE_DIR = ROOT.parent / "Gcode"
 SAMPLES = GCODE_DIR / "test 2 blocks gcode"

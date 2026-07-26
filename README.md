@@ -4,7 +4,8 @@ Console-only Python port of [Looprint](../looprint) — it takes a plate you alr
 sliced in Bambu Studio / OrcaSlicer and rewrites it so the same part prints many
 times in a row, cooling down and ejecting each copy before the next one starts.
 
-No web view, no browser, no upload. One command:
+No web view, no browser, no upload, nothing to install. One command, run from
+this folder:
 
 ```bash
 python -m pylooprint "my_part.gcode.3mf"
@@ -61,7 +62,7 @@ The single-file original mixes UI, printer data and G-code surgery in one
 12 000-line script. The port splits it along the line that actually matters:
 **what every Bambu printer needs** versus **what one machine needs**.
 
-### Common G-code modifications — `src/pylooprint/core/`
+### Common G-code modifications — `pylooprint/core/`
 
 These run identically for a P1, X1, A1 and A1 Mini:
 
@@ -89,7 +90,7 @@ missing.
 Porting a printer to the in-place strategy therefore means overriding one
 method. There is no capability flag to keep in step with it.
 
-### Printer-specific modifications — `src/pylooprint/printers/`
+### Printer-specific modifications — `pylooprint/printers/`
 
 Two engines, because the two families push the part off in *different
 directions* and confusing them drives the toolhead into the print:
@@ -129,6 +130,11 @@ nothing in `core/` changes.
 ```bash
 python -m pylooprint INPUT.gcode.3mf [-o OUTPUT.gcode.3mf] [-n LOOPS] [-t TEMP] ...
 ```
+
+Run it from this folder — there is nothing to install. If you would rather call
+it from anywhere as a bare `pylooprint` command, `python -m pip install -e .`
+puts it on your PATH while still running the files in this folder (undo with
+`python -m pip uninstall pylooprint`). Entirely optional.
 
 | Option | Default | Meaning |
 |---|---|---|

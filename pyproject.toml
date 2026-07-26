@@ -18,11 +18,11 @@ pylooprint = "pylooprint.cli:main"
 test = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["pylooprint*"]
 
 [tool.setuptools.package-data]
 "pylooprint.printers.templates" = ["*.gcode"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src", "tests"]
+pythonpath = [".", "tests"]
