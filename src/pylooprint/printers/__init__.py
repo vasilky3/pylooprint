@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from .a1 import A1Profile
 from .a1_mini import A1MiniProfile
-from .base import BedBounds, EndCodeContext, PrinterProfile
+from .base import BedBounds, EndCodeContext, MachineCode, PrinterProfile
 from .p1 import P1Profile
 from .x1 import X1Profile
 
@@ -22,6 +22,7 @@ __all__ = [
     "A1Profile",
     "BedBounds",
     "EndCodeContext",
+    "MachineCode",
     "P1Profile",
     "PrinterProfile",
     "X1Profile",

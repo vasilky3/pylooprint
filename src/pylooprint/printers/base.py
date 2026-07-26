@@ -9,11 +9,12 @@ temperature offset.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import resources
-from typing import Sequence
+from typing import Mapping
 
-from ..core.patching import LineRangePatch
+from ..core.structure import GcodeStructure
+from ..core.template import render_start_code
 from ..settings import LoopSettings
 
 _TEMPLATE_PACKAGE = "pylooprint.printers.templates"
@@ -27,6 +28,16 @@ class BedBounds:
     max_x: float
     min_y: float
     max_y: float
+
+
+@dataclass(frozen=True)
+class MachineCode:
+    """The machine G-code one loop is wrapped in."""
+
+    start_code: str
+    end_code: str
+    #: Notes for the user - e.g. that a profile fell back to the templates.
+    warnings: tuple[str, ...] = field(default=())
 
 
 @dataclass(frozen=True)
@@ -80,18 +91,26 @@ class PrinterProfile(ABC):
     def end_code(self, context: EndCodeContext) -> str:
         """Cool-down and push-off sequence appended after every loop."""
 
-    # -- in-place strategy -------------------------------------------------
-    # Only implemented by profiles that can loop a plate without swapping the
-    # slicer's own machine G-code out; see pylooprint.core.patching.
+    def build_machine_code(
+        self,
+        structure: GcodeStructure,
+        context: EndCodeContext,
+        values: Mapping[str, object],
+    ) -> MachineCode:
+        """Produce the start and end code that wrap one loop.
 
-    #: True when :meth:`start_code_patches` and :meth:`patch_slicer_end_code`
-    #: are implemented for this machine.
-    supports_inplace: bool = False
+        This default throws the slicer's machine G-code away and substitutes
+        this profile's templates, which is what the original web tool does.  It
+        works for any printer but loses whatever the printer profile configured
+        - flow calibration, bed levelling, build-plate detection.
 
-    def start_code_patches(self) -> Sequence[LineRangePatch]:
-        """Edits applied to the slicer's own start code before each loop."""
-        raise NotImplementedError(f"{self.name} has no in-place start-code patches")
-
-    def patch_slicer_end_code(self, end_code: str, context: EndCodeContext) -> str:
-        """Splice the cool-down and push-off into the slicer's own end code."""
-        raise NotImplementedError(f"{self.name} has no in-place end-code patch")
+        A profile that can instead *patch* the slicer's own machine G-code
+        overrides this and uses ``structure.slicer_start_code`` /
+        ``structure.slicer_end_code``; see :class:`~pylooprint.printers.a1_mini.A1MiniProfile`.
+        """
+        speed_mode = context.settings.speed_mode
+        return MachineCode(
+            start_code=render_start_code(self.start_code(context.settings), values, speed_mode),
+            end_code=self.end_code(context),
+            warnings=(f"{self.name} has no in-place machine G-code yet; using the Factorian templates",),
+        )

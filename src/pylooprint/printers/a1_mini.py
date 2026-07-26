@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Mapping, Sequence
 
-from ..core.patching import LineRangePatch, replace_between
-from .base import BedBounds, EndCodeContext, load_template
+from ..core.patching import LineRangePatch, apply_patches, replace_between
+from ..core.structure import GcodeStructure
+from ..core.template import apply_speed_mode
+from .base import BedBounds, EndCodeContext, MachineCode, load_template
 from .bedslinger import ALIGN_FEED_SLOW, BedSlingerProfile
 
 #: Unique lines in the slicer's own end code that bracket the part it replaces.
@@ -38,7 +40,23 @@ class A1MiniProfile(BedSlingerProfile):
     end_head_template_name = "end_a1_mini_head.gcode"
     end_tail_template_name = "end_a1_mini_tail.gcode"
 
-    supports_inplace = True
+    def build_machine_code(
+        self,
+        structure: GcodeStructure,
+        context: EndCodeContext,
+        values: Mapping[str, object],
+    ) -> MachineCode:
+        """Keep the slicer's machine G-code and patch only what looping breaks.
+
+        Everything the printer profile configured - flow calibration, bed
+        levelling, build-plate detection, timelapse - survives, so only the
+        purge lines and the tail of the end code are rewritten.
+        """
+        start_code = apply_patches(structure.slicer_start_code, self.start_code_patches())
+        return MachineCode(
+            start_code=apply_speed_mode(start_code, context.settings.speed_mode),
+            end_code=self.patch_slicer_end_code(structure.slicer_end_code, context),
+        )
 
     def start_code_patches(self) -> Sequence[LineRangePatch]:
         """Purge into the air instead of drawing a line on the plate.

@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import zipfile
 
+import pytest
+
 from pylooprint.core.placement import determine_model_placement
 from pylooprint.core.project import ThreeMfProject
 from pylooprint.core.structure import split_gcode
 from pylooprint.core.template import centre_coordinates, resolve_max_layer_z, substitute_first_layer_centre
 from pylooprint.core.variables import extract_variable_values
 from pylooprint.pipeline import build_loops, detect_printer
-from pylooprint.printers import EndCodeContext, get_profile
+from pylooprint.printers import EndCodeContext, PrinterProfile, get_profile
 from pylooprint.settings import LoopSettings
 
 from conftest import GOLDEN_TEMP
@@ -66,3 +68,14 @@ def test_a1_mini_does_not_take_the_fallback(golden_project):
         project, detect_printer(project), LoopSettings(loops=1, cooldown_temp=28), source_name="x.3mf"
     )
     assert not any("no in-place" in w for w in result.warnings)
+
+
+@pytest.mark.parametrize("key", ["p1", "x1", "a1"])
+def test_profiles_awaiting_an_inplace_port_use_the_default(key):
+    """Not overriding ``build_machine_code`` is what selects the fallback.
+
+    Porting a printer means overriding that one method - there is no flag to
+    keep in step with it.
+    """
+    assert type(get_profile(key)).build_machine_code is PrinterProfile.build_machine_code
+    assert type(get_profile("a1mini")).build_machine_code is not PrinterProfile.build_machine_code

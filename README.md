@@ -78,10 +78,16 @@ These run identically for a P1, X1, A1 and A1 Mini:
 | 9. Assemble the loops | `loop_builder.py` | Banner, per-loop header/config or `M400`, setup, start code, `M220 S<speed>`, print, end code |
 | 10. Repack | `project.py` | Write the new plate G-code back into a copy of the zip |
 
-Step 8 (rendering Factorian's templates) only runs for the fallback printers.
-For the A1 Mini the slicer's machine start/end code is kept and edited instead,
-by `patching.py` — anchor-based line-range replacement that raises rather than
-silently mis-patching when an anchor is missing.
+Step 8 is where the two strategies part company, and **the profile decides which
+one it uses** — the pipeline just calls `profile.build_machine_code(...)` and
+takes what it is handed. `PrinterProfile.build_machine_code` renders Factorian's
+templates by default; `A1MiniProfile` overrides that single method to patch the
+slicer's own machine G-code instead, via `patching.py` — anchor-based line-range
+replacement that raises rather than silently mis-patching when an anchor is
+missing.
+
+Porting a printer to the in-place strategy therefore means overriding one
+method. There is no capability flag to keep in step with it.
 
 ### Printer-specific modifications — `src/pylooprint/printers/`
 
