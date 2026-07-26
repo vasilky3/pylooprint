@@ -11,7 +11,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from importlib import resources
+from typing import Sequence
 
+from ..core.patching import LineRangePatch
 from ..settings import LoopSettings
 
 _TEMPLATE_PACKAGE = "pylooprint.printers.templates"
@@ -77,3 +79,19 @@ class PrinterProfile(ABC):
     @abstractmethod
     def end_code(self, context: EndCodeContext) -> str:
         """Cool-down and push-off sequence appended after every loop."""
+
+    # -- in-place strategy -------------------------------------------------
+    # Only implemented by profiles that can loop a plate without swapping the
+    # slicer's own machine G-code out; see pylooprint.core.patching.
+
+    #: True when :meth:`start_code_patches` and :meth:`patch_slicer_end_code`
+    #: are implemented for this machine.
+    supports_inplace: bool = False
+
+    def start_code_patches(self) -> Sequence[LineRangePatch]:
+        """Edits applied to the slicer's own start code before each loop."""
+        raise NotImplementedError(f"{self.name} has no in-place start-code patches")
+
+    def patch_slicer_end_code(self, end_code: str, context: EndCodeContext) -> str:
+        """Splice the cool-down and push-off into the slicer's own end code."""
+        raise NotImplementedError(f"{self.name} has no in-place end-code patch")

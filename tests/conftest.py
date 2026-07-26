@@ -1,6 +1,6 @@
 """Shared fixtures.
 
-The golden files live in the sibling ``Gcode`` folder that ships with this
+The sample files live in the sibling ``Gcode`` folder that ships with this
 repository; tests that need them are skipped when it is not present.
 """
 
@@ -18,16 +18,21 @@ sys.path.insert(0, str(ROOT / "src"))
 GCODE_DIR = ROOT.parent / "Gcode"
 SAMPLES = GCODE_DIR / "test 2 blocks gcode"
 
-#: Plain sliced plate for an A1 Mini, and the file the original web tool
-#: produced from it with loops=1 and a 58 degree cool-down.
+#: Plain sliced A1 Mini plate, and the 3MF it came out of.
 GOLDEN_SOURCE = SAMPLES / "test 2 blocks" / "Metadata" / "2b_base.gcode"
-GOLDEN_OUTPUT = SAMPLES / "test 2 blocks_Looprint" / "Metadata" / "2b_LP.gcode"
 CONTAINER = GCODE_DIR / "test 2 blocks.gcode.3mf"
-#: A hand-assembled A1 Mini file that already carries a Looprint end code.
-RESULT_3MF = GCODE_DIR / "result.gcode.3mf"
 
+#: An A1 Mini file that already carries a Looprint end code; used to check the
+#: Factorian fallback against a real looped output.
+RESULT_3MF = GCODE_DIR / "result.gcode.3mf"
+#: Cool-down temperature baked into the end code embedded in RESULT_3MF.
 GOLDEN_TEMP = 58
-GOLDEN_LOOPS = 1
+
+#: The hand-modified reference for the in-place strategy: the same slicer output
+#: as GOLDEN_SOURCE, with the purge lines turned into air purges and the eject
+#: sequence spliced into the machine end code. Built with a 28 C cool-down.
+INPLACE_REFERENCE = SAMPLES / "test 2 blocks mymod" / "Metadata" / "plate_1.gcode"
+INPLACE_TEMP = 28
 
 
 def _require(path: Path) -> Path:
@@ -37,13 +42,8 @@ def _require(path: Path) -> Path:
 
 
 @pytest.fixture(scope="session")
-def golden_expected() -> str:
-    return _require(GOLDEN_OUTPUT).read_text(encoding="utf-8")
-
-
-@pytest.fixture(scope="session")
 def golden_project(tmp_path_factory) -> Path:
-    """The sliced plate that produced the golden output, packed as a 3MF."""
+    """The plain sliced plate, packed as a 3MF - the in-place strategy's input."""
     _require(CONTAINER)
     _require(GOLDEN_SOURCE)
     destination = tmp_path_factory.mktemp("golden") / "golden_input.gcode.3mf"
@@ -60,3 +60,8 @@ def golden_project(tmp_path_factory) -> Path:
 @pytest.fixture(scope="session")
 def result_3mf() -> Path:
     return _require(RESULT_3MF)
+
+
+@pytest.fixture(scope="session")
+def inplace_reference() -> str:
+    return _require(INPLACE_REFERENCE).read_text(encoding="utf-8")

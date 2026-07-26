@@ -12,7 +12,9 @@ from dataclasses import dataclass
 # Limits copied from the original tool so that CLI validation behaves the same.
 MIN_LOOPS = 1
 MAX_LOOPS = 1000
-DEFAULT_LOOPS = 5
+#: One copy by default - the eject sequence is useful on its own, and looping is
+#: the exception rather than the rule.
+DEFAULT_LOOPS = 1
 
 MIN_TEMP = 15
 MAX_TEMP = 90

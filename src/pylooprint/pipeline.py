@@ -11,10 +11,17 @@ from datetime import datetime
 
 from .core.constants import FALLBACK_MAX_Z_HEIGHT_MM, LOOPRINT_WATERMARKS, MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_RE
 from .core.loop_builder import LoopPlan, build_looped_gcode
+from .core.patching import apply_patches
 from .core.placement import ModelPlacement, determine_model_placement
 from .core.project import PROJECT_SETTINGS, SLICE_INFO, ThreeMfProject
-from .core.structure import split_gcode, strip_slicer_end_code
-from .core.template import centre_coordinates, render_start_code, resolve_max_layer_z, substitute_first_layer_centre
+from .core.structure import GcodeStructure, split_gcode
+from .core.template import (
+    apply_speed_mode,
+    centre_coordinates,
+    render_start_code,
+    resolve_max_layer_z,
+    substitute_first_layer_centre,
+)
 from .core.variables import extract_variable_values
 from .errors import AlreadyLoopedError, UnknownPrinterError
 from .printers import EndCodeContext, PrinterProfile
@@ -72,12 +79,9 @@ def build_loops(
     bed = profile.bed_bounds
     placement = determine_model_placement(gcode, bed.min_x, bed.max_x, bed.min_y, bed.max_y)
 
-    structure = split_gcode(strip_slicer_end_code(gcode))
+    structure = split_gcode(gcode)
     values = extract_variable_values(gcode, structure.config, placement.as_bounds())
     values["originalToolCommand"] = structure.original_tool_command
-
-    start_code = render_start_code(profile.start_code(settings), values, settings.speed_mode)
-    centre_x, centre_y = centre_coordinates(values.get("first_layer_center_no_wipe_tower"))
 
     context = EndCodeContext(
         settings=settings,
@@ -85,7 +89,21 @@ def build_loops(
         model_max_x=placement.max_x,
         direction=placement.direction,
     )
-    end_code = profile.end_code(context)
+
+    if profile.supports_inplace:
+        # Keep the slicer's own machine G-code and rewrite only the purge lines
+        # and the end-code tail.
+        start_code, end_code = _inplace_machine_code(structure, profile, settings, context)
+    else:
+        # Not yet ported to the in-place strategy: fall back to Factorian's
+        # start/end templates, exactly as the original web tool does.
+        warnings.append(
+            f"{profile.name} has no in-place machine G-code yet; using the Factorian templates"
+        )
+        start_code = render_start_code(profile.start_code(settings), values, settings.speed_mode)
+        end_code = profile.end_code(context)
+
+    centre_x, centre_y = centre_coordinates(values.get("first_layer_center_no_wipe_tower"))
     end_code = substitute_first_layer_centre(end_code, centre_x, centre_y)
     end_code = resolve_max_layer_z(end_code, max_layer_z, from_header=from_header)
 
@@ -108,6 +126,24 @@ def build_loops(
         max_layer_z_from_header=from_header,
         warnings=warnings,
     )
+
+
+def _inplace_machine_code(
+    structure: GcodeStructure,
+    profile: PrinterProfile,
+    settings: LoopSettings,
+    context: EndCodeContext,
+) -> tuple[str, str]:
+    """Patch the slicer's own machine G-code instead of replacing it.
+
+    The result drops straight into the same loop assembly the Factorian
+    strategy uses, so everything the printer profile configured - flow
+    calibration, bed levelling, build-plate detection, timelapse - survives.
+    """
+    start_code = apply_patches(structure.slicer_start_code, profile.start_code_patches())
+    start_code = apply_speed_mode(start_code, settings.speed_mode)
+    end_code = profile.patch_slicer_end_code(structure.slicer_end_code, context)
+    return start_code, end_code
 
 
 def _read_max_layer_z(gcode: str, warnings: list[str]) -> tuple[float, bool]:

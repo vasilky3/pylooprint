@@ -7,9 +7,9 @@ Common to every printer.  A Bambu/Orca plate file looks like this::
     ; EXECUTABLE_BLOCK_START
     <setup commands>
     ; FEATURE: Custom
-    <machine start G-code>          <- replaced by the printer profile
+    <machine start G-code>          <- replaced or patched by the profile
     ; CHANGE_LAYER ... <the print>  <- repeated once per loop
-    ;===== date: ...                <- machine end G-code, dropped
+    ;===== date: ...                <- machine end G-code, replaced or patched
 """
 
 from __future__ import annotations
@@ -40,33 +40,46 @@ _START_CODE_LEFTOVERS = ("G1 Z5 F300", "M17 X1.2 Y1.2 Z0.75", "G90\nM17 X1.2")
 
 @dataclass(frozen=True)
 class GcodeStructure:
-    """The four pieces a looped file is assembled from."""
+    """The pieces a looped file is assembled from.
+
+    ``header``, ``config``, ``setup`` and ``print_body`` are reused as-is by
+    both strategies.  The two ``slicer_*`` fields hold the machine G-code that
+    the Factorian strategy discards and the in-place strategy patches.
+    """
 
     header: str
     config: str
     setup: str
     print_body: str
     original_tool_command: str | None
+    #: Machine start G-code, between ``; FEATURE: Custom`` and the first layer.
+    slicer_start_code: str = ""
+    #: Machine end G-code, from the last ``;===== date:`` marker to the end.
+    slicer_end_code: str = ""
     #: False when the file had no ``; EXECUTABLE_BLOCK_START`` to split on, in
     #: which case ``setup`` holds the whole file and must not be treated as a
     #: prologue that a start code can be appended to.
     recognised: bool = True
 
 
-def strip_slicer_end_code(gcode: str) -> str:
-    """Drop the machine end G-code so the loop can supply its own."""
-    index = gcode.rfind(END_CODE_START_MARKER)
-    if index == -1:
-        return gcode
-    return gcode[:index].strip()
+def split_gcode(plate_gcode: str) -> GcodeStructure:
+    """Split a full plate G-code into the pieces a loop is built from."""
+    end_index = plate_gcode.rfind(END_CODE_START_MARKER)
+    if end_index == -1:
+        gcode, slicer_end_code = plate_gcode, ""
+    else:
+        gcode, slicer_end_code = plate_gcode[:end_index].strip(), plate_gcode[end_index:]
 
-
-def split_gcode(gcode: str) -> GcodeStructure:
-    """Split a plate G-code that already had its end code stripped."""
     executable_start = gcode.find(EXECUTABLE_BLOCK_START)
     if executable_start == -1:
         return GcodeStructure(
-            header="", config="", setup=gcode, print_body="", original_tool_command=None, recognised=False
+            header="",
+            config="",
+            setup=gcode,
+            print_body="",
+            original_tool_command=None,
+            slicer_end_code=slicer_end_code,
+            recognised=False,
         )
 
     tool = extract_original_tool_command(gcode[executable_start:])
@@ -81,28 +94,37 @@ def split_gcode(gcode: str) -> GcodeStructure:
         config = header[config_start : config_end + len(CONFIG_BLOCK_END)]
         header = header[:config_start].strip() + "\n" + header[config_end + len(CONFIG_BLOCK_END) :].strip()
 
-    setup, print_body = _split_setup_and_print(executable)
-    return GcodeStructure(header=header, config=config, setup=setup, print_body=print_body, original_tool_command=tool)
+    setup, slicer_start_code, print_body = _split_setup_and_print(executable)
+    return GcodeStructure(
+        header=header,
+        config=config,
+        setup=setup,
+        print_body=print_body,
+        original_tool_command=tool,
+        slicer_start_code=slicer_start_code,
+        slicer_end_code=slicer_end_code,
+    )
 
 
-def _split_setup_and_print(executable: str) -> tuple[str, str]:
+def _split_setup_and_print(executable: str) -> tuple[str, str, str]:
     feature_index = executable.find(FEATURE_CUSTOM)
     if feature_index == -1:
-        return executable, ""
+        return executable, "", ""
 
     setup = executable[: feature_index + len(FEATURE_CUSTOM)]
     after_feature = executable[feature_index + len(FEATURE_CUSTOM) :]
 
     layer_marker = LAYER_MARKER_RE.search(after_feature)
     if layer_marker is None:
-        return setup, _split_without_layer_marker(after_feature)
+        return setup, "", _split_without_layer_marker(after_feature)
 
+    slicer_start_code = after_feature[: layer_marker.start()].strip()
     print_body = _drop_leftover_start_code(after_feature[layer_marker.start() :])
     if any(fragment in print_body for fragment in _START_CODE_LEFTOVERS):
         leftover = _KEEP_COMMENT_RE.search(print_body)
         if leftover:
             print_body = print_body[leftover.start() :]
-    return setup, print_body
+    return setup, slicer_start_code, print_body
 
 
 def _split_without_layer_marker(after_feature: str) -> str:

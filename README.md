@@ -7,14 +7,51 @@ times in a row, cooling down and ejecting each copy before the next one starts.
 No web view, no browser, no upload. One command:
 
 ```bash
-python -m pylooprint "my_part.gcode.3mf" -n 10 -t 18
+python -m pylooprint "my_part.gcode.3mf"
 ```
+
+That produces one copy that ejects itself when it finishes. Add `-n 10` to print
+ten in a row.
 
 The original project is untouched; this package only *reads* its G-code
 templates (they were extracted once into `printers/templates/`).
 
 > **Safety.** This drives a heated printer through an unattended part-ejection
 > cycle. Stay in the room. Watch the first loop end-to-end before trusting it.
+
+---
+
+## How it loops a plate
+
+Keep the machine G-code the slicer emitted and rewrite only what is wrong for
+looping:
+
+* **Purge lines become air purges.** The slicer draws its extrusion-calibration
+  line across the front of the plate. On the second and later loops that is
+  where the previous part was just ejected from, and the line would be drawn
+  onto the plate the next part has to stick to. Both calibration draws become
+  `G0 E50 F100` — purge into the air instead.
+* **The end code gets an eject sequence spliced in.** Everything the slicer does
+  first (timelapse, filament unload, hotend off) is kept, the Z-lift is carried
+  over, the gantry parks up against the mechanical switch at the top (Z184.5 —
+  deliberately above the 180 mm printable height, do not "correct" it), then the
+  cool-down, push-off and wiggle sweep run, and the slicer's own reset and finish
+  sound close the loop. The move to the model centre crawls at F300 rather than a
+  rapid, so the toolhead cannot knock a tall part over.
+
+Everything the printer profile configured — flow calibration, bed levelling,
+build-plate detection — survives untouched.
+
+### Fallback for printers not yet ported
+
+Only the **A1 Mini** has this in-place implementation so far. Any other printer
+falls back — with a warning — to the **Factorian templates**: the machine start
+and end code are thrown away and replaced with Factorian Designs' start/end
+G-code, which is what the original web tool does. This is a stopgap; each printer
+loses the fallback as its in-place patches are added.
+
+Either way the loops are assembled by the same code, so the banner, the per-loop
+markers and the speed handling are identical — only the machine G-code differs.
 
 ---
 
@@ -34,13 +71,17 @@ These run identically for a P1, X1, A1 and A1 Mini:
 | 2. Refuse a re-loop | `constants.py` | Bail out if the file already carries a Looprint watermark |
 | 3. Read the model height | `pipeline.py` | `; max_z_height:` from the header — every Z-drop decision depends on it |
 | 4. Locate the model | `placement.py` | Scan extrusion moves for the X/Y bounding box, filtering prime lines, nozzle wipes and start-code travel |
-| 5. Drop the machine end code | `structure.py` | Everything from the last `;===== date:` marker is the slicer's end code and must go |
-| 6. Split the file | `structure.py` | header / `CONFIG_BLOCK` / setup / print body, cutting the slicer start code out from between `; FEATURE: Custom` and the first layer marker |
-| 7. Keep the extruder | `structure.py` | Recover `T0`..`T3`, otherwise the loop inherits `T255` from the unload sequence and never extrudes |
-| 8. Read the slicer settings | `config_block.py`, `variables.py` | Parse `CONFIG_BLOCK` into values, with G-code and hard-coded fallbacks |
-| 9. Render the templates | `template.py` | `[name]`, `{expression}` and `{if ...}{endif}` substitution, including the `{max_layer_z ± n}` arithmetic |
-| 10. Assemble the loops | `loop_builder.py` | Banner, per-loop header/config or `M400`, setup, start code, `M220 S<speed>`, print, end code |
-| 11. Repack | `project.py` | Write the new plate G-code back into a copy of the zip |
+| 5. Split the file | `structure.py` | header / `CONFIG_BLOCK` / setup / print body, plus the slicer's machine start and end code kept aside for patching |
+| 6. Keep the extruder | `structure.py` | Recover `T0`..`T3`, otherwise the loop inherits `T255` from the unload sequence and never extrudes |
+| 7. Read the slicer settings | `config_block.py`, `variables.py` | Parse `CONFIG_BLOCK` into values, with G-code and hard-coded fallbacks |
+| 8. Render the templates | `template.py` | `[name]`, `{expression}` and `{if ...}{endif}` substitution, including the `{max_layer_z ± n}` arithmetic |
+| 9. Assemble the loops | `loop_builder.py` | Banner, per-loop header/config or `M400`, setup, start code, `M220 S<speed>`, print, end code |
+| 10. Repack | `project.py` | Write the new plate G-code back into a copy of the zip |
+
+Step 8 (rendering Factorian's templates) only runs for the fallback printers.
+For the A1 Mini the slicer's machine start/end code is kept and edited instead,
+by `patching.py` — anchor-based line-range replacement that raises rather than
+silently mis-patching when an anchor is missing.
 
 ### Printer-specific modifications — `src/pylooprint/printers/`
 
@@ -85,7 +126,7 @@ python -m pylooprint INPUT.gcode.3mf [-o OUTPUT.gcode.3mf] [-n LOOPS] [-t TEMP] 
 
 | Option | Default | Meaning |
 |---|---|---|
-| `-n, --loops` | 5 | how many copies |
+| `-n, --loops` | 1 | how many copies |
 | `-t, --temp` | 18 | bed temperature to cool down to before the push-off |
 | `-p, --printer` | auto | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
 | `--speed` | 100 | print speed percentage applied to every loop |
@@ -100,7 +141,11 @@ python -m pylooprint INPUT.gcode.3mf [-o OUTPUT.gcode.3mf] [-n LOOPS] [-t TEMP] 
 Example:
 
 ```bash
+# twenty copies, ejecting each one, cooling to 18 C first
 python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -n 20 -t 18 -o batch.gcode.3mf
+
+# one copy that dismounts itself
+python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -t 28
 ```
 
 ---
@@ -111,30 +156,24 @@ python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -n 20 -t 18 -o batch.gcode.3mf
 python -m pytest
 ```
 
-The suite is anchored on real output of the original web tool:
+The suite is anchored on two real reference files:
 
-* **`test_webtool_equivalence.py`** — `looprint/index.html` was run unmodified in
-  a browser on `Gcode/test 2 blocks.gcode.3mf` at three settings, and its output
-  frozen into `tests/golden/`. pylooprint regenerates each one and must match
-  **line for line**; the only permitted difference is the `; Generated:`
-  wall-clock timestamp, and a second test asserts that nothing else hides behind
-  that normalisation.
+* **`test_inplace.py`** — the primary. Its reference is
+  `Gcode/test 2 blocks gcode/test 2 blocks mymod/Metadata/plate_1.gcode`, the
+  slicer output in `test 2 blocks/` patched by hand (air purges + spliced eject
+  sequence). pylooprint reproduces that file's **machine start and end code byte
+  for byte** from the unmodified slicer file; the loop scaffolding around it is
+  Looprint's. Also covers the purge patch, the carried-over Z-lift, the slow
+  align move, multi-loop repetition and speed handling.
+* **`test_factorian_fallback.py`** — pins the fallback path: the generated A1
+  Mini end code is compared against the one embedded in `Gcode/result.gcode.3mf`
+  (byte for byte), and a CoreXY printer is shown to take the fallback and warn.
+* **`test_core.py` / `test_printers.py`** — unit coverage of the shared
+  machinery (config parsing, structure split, template engine, placement) and of
+  what each profile contributes (bed bounds, temp offset, push lanes, sweep).
+* **`test_cli.py`** — end-to-end runs through the console entry point.
 
-  | Loops | Cool-down | Speed | Output |
-  |---|---|---|---|
-  | 3 | 18 °C | 100 % | 448 731 B / 21 046 lines |
-  | 5 | 30 °C | 124 % | 720 225 B |
-  | 2 | 25 °C | 166 % | 312 984 B |
-
-* **`test_a1_mini_golden.py`** rebuilds the archived `2b_LP.gcode` from
-  `2b_base.gcode` (A1 Mini, 1 loop, 58 °C) and asserts it is **byte-for-byte
-  identical** — a second, independently produced sample. It also compares the
-  generated A1 Mini end code against the one embedded in
-  `Gcode/result.gcode.3mf`.
-* **`test_loops.py`** runs `Gcode/result.gcode.3mf` through the pipeline at 1, 2
-  and 5 loops and checks the per-loop structure.
-
-Tests that need those samples skip themselves if the `Gcode` folder is absent.
+Tests that need the sample files skip themselves if the `Gcode` folder is absent.
 
 ---
 

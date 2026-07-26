@@ -57,7 +57,7 @@ def render_start_code(template: str, values: Mapping[str, object], speed_mode: i
     result = _apply_conditionals(result, values)
     result = _apply_expressions(result, values)
     result = _apply_brackets(result, values)
-    result = _apply_speed_mode(result, speed_mode)
+    result = apply_speed_mode(result, speed_mode)
     result = _apply_trailing_expressions(result, values)
     return result
 
@@ -150,7 +150,8 @@ def _apply_brackets(text: str, values: Mapping[str, object]) -> str:
     return text.replace("[initial_no_support_extruder]", extruder)
 
 
-def _apply_speed_mode(text: str, speed_mode: int) -> str:
+def apply_speed_mode(text: str, speed_mode: int) -> str:
+    """Retune the feedrate the start code resets to."""
     replacement = f"M220 S{speed_mode} ;Reset Feedrate (Looprint: {speed_mode}% speed)"
     text = _M220_WITH_COMMENT_RE.sub(replacement, text)
     return _M220_BARE_RE.sub(replacement, text)

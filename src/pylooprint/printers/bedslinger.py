@@ -16,6 +16,12 @@ from .base import EndCodeContext, PrinterProfile, load_template
 #: Fixed X feedrate of the wiggle sweep, as in Factorian's End_A1 templates.
 WIGGLE_SPEED = 2000
 
+#: Feedrate of the "move the nozzle over the model centre" travel that precedes
+#: the push. Factorian's template does it as a rapid; the in-place strategy
+#: crawls instead, so the toolhead cannot knock a tall part over on the way.
+ALIGN_FEED_RAPID = 12000
+ALIGN_FEED_SLOW = 300
+
 
 class BedSlingerProfile(PrinterProfile):
     """Common behaviour of the Y-axis push-off printers."""
@@ -36,10 +42,12 @@ class BedSlingerProfile(PrinterProfile):
         """The bed sensor reads ~4 degrees high, and 15 C is the floor."""
         return max(15, temp + self.temp_offset)
 
-    def push_gcode(self) -> str:
+    def push_gcode(self, align_feed: int = ALIGN_FEED_RAPID) -> str:
         """Align the nozzle with the model centre, drop Z, drive the bed forward."""
         template = load_template("a1_push.gcode")
-        return template.replace("@Y_FORWARD@", _format_number(self.y_forward))
+        return template.replace("@Y_FORWARD@", _format_number(self.y_forward)).replace(
+            "@ALIGN_FEED@", str(align_feed)
+        )
 
     def wiggle_sweep(self, speed: float = WIGGLE_SPEED) -> str:
         """Sweep the released part off the plate at bed level."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pylooprint.core.config_block import config_value, parse_config_block
 from pylooprint.core.jsnum import number_to_string, to_fixed
 from pylooprint.core.placement import determine_model_placement
-from pylooprint.core.structure import extract_original_tool_command, split_gcode, strip_slicer_end_code
+from pylooprint.core.structure import extract_original_tool_command, split_gcode
 from pylooprint.core.template import render_start_code, resolve_max_layer_z
 from pylooprint.core.variables import extract_variable_values
 
@@ -35,24 +35,25 @@ def test_config_value_resolves_the_extruder_index():
     assert config_value(config, "nozzle_temperature", None, "0") == "200"
 
 
-def test_strip_slicer_end_code_cuts_at_the_last_date_marker():
-    gcode = "; print\n;===== date: 1 =====\nfoo\n;===== date: 2 =====\nbar"
-    assert strip_slicer_end_code(gcode) == "; print\n;===== date: 1 =====\nfoo"
-
-
-def test_split_gcode_separates_setup_from_the_print():
+def test_split_gcode_separates_every_piece_a_loop_is_built_from():
     gcode = (
         "; HEADER_BLOCK_START\n; max_z_height: 10\n; HEADER_BLOCK_END\n"
         + CONFIG
         + "\n; EXECUTABLE_BLOCK_START\nM73 P0\n; FEATURE: Custom\nT0\nM109 S220\n"
         "; CHANGE_LAYER\nG1 X1 Y1 E1\n"
+        ";===== date: 20240101 =====\nM104 S0\nM18 X Y Z\n"
     )
     structure = split_gcode(gcode)
     assert structure.setup.endswith("; FEATURE: Custom")
     assert structure.print_body.startswith("; CHANGE_LAYER")
+    assert structure.print_body.rstrip().endswith("G1 X1 Y1 E1")
     assert "; CONFIG_BLOCK_START" in structure.config
     assert "; CONFIG_BLOCK_START" not in structure.header
     assert structure.original_tool_command == "0"
+    # The machine start/end code is kept for the in-place strategy to patch.
+    assert structure.slicer_start_code == "T0\nM109 S220"
+    assert structure.slicer_end_code.startswith(";===== date: 20240101")
+    assert "M18 X Y Z" in structure.slicer_end_code
 
 
 def test_extract_original_tool_command_ignores_temperatures_and_t255():
