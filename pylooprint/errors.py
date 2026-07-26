@@ -21,3 +21,7 @@ class AlreadyLoopedError(LooprintError):
 
 class UnknownPrinterError(LooprintError):
     """The printer model could not be detected and none was given."""
+
+
+class UnsafeEjectZoneError(LooprintError):
+    """The model sits where the toolhead descends to eject the part."""

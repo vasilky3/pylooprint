@@ -34,6 +34,13 @@ GOLDEN_TEMP = 58
 INPLACE_REFERENCE = SAMPLES / "test 2 blocks mymod" / "Metadata" / "plate_1.gcode"
 INPLACE_TEMP = 28
 
+#: Two A1 Mini cubes that bracket the eject keep-out zone.  The projects in
+#: ORCA_DIR are unsliced, so these globs only match once they have been sliced
+#: and exported as .gcode.3mf; the tests using them skip until then.
+ORCA_DIR = ROOT.parent / "orcaProj"
+FULLFIELD_GLOB = "A1mini_cube180_fullfield*.gcode.3mf"
+SUITABLE_GLOB = "A1mini_cube160h180_sutable*.gcode.3mf"
+
 
 def _require(path: Path) -> Path:
     if not path.exists():
@@ -65,3 +72,26 @@ def result_3mf() -> Path:
 @pytest.fixture(scope="session")
 def inplace_reference() -> str:
     return _require(INPLACE_REFERENCE).read_text(encoding="utf-8")
+
+
+def _require_sliced(pattern: str) -> Path:
+    """First sliced export matching ``pattern``, or skip."""
+    matches = sorted(ORCA_DIR.glob(pattern))
+    if not matches:
+        pytest.skip(
+            f"no sliced export matching {pattern} in {ORCA_DIR}; "
+            "open the .3mf project in Bambu Studio, slice it and export as .gcode.3mf"
+        )
+    return matches[0]
+
+
+@pytest.fixture(scope="session")
+def fullfield_project() -> Path:
+    """180 mm cube covering the whole plate - must be refused."""
+    return _require_sliced(FULLFIELD_GLOB)
+
+
+@pytest.fixture(scope="session")
+def suitable_project() -> Path:
+    """160 mm cube shifted clear of the keep-out corner - must be accepted."""
+    return _require_sliced(SUITABLE_GLOB)

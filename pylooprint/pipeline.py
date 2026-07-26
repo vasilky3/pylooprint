@@ -11,7 +11,7 @@ from datetime import datetime
 
 from .core.constants import FALLBACK_MAX_Z_HEIGHT_MM, LOOPRINT_WATERMARKS, MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_RE
 from .core.loop_builder import LoopPlan, build_looped_gcode
-from .core.placement import ModelPlacement, determine_model_placement
+from .core.placement import ModelPlacement, determine_model_placement, measure_extrusion_bounds
 from .core.project import PROJECT_SETTINGS, SLICE_INFO, ThreeMfProject
 from .core.structure import split_gcode
 from .core.template import centre_coordinates, resolve_max_layer_z, substitute_first_layer_centre
@@ -69,10 +69,14 @@ def build_loops(
         warnings.append(message)
 
     max_layer_z, from_header = _read_max_layer_z(gcode, warnings)
+    structure = split_gcode(gcode)
+
+    # Refuse before generating anything if the model sits where this printer
+    # brings the toolhead down to eject the part.
+    profile.check_eject_clearance(measure_extrusion_bounds(structure.print_body))
+
     bed = profile.bed_bounds
     placement = determine_model_placement(gcode, bed.min_x, bed.max_x, bed.min_y, bed.max_y)
-
-    structure = split_gcode(gcode)
     values = extract_variable_values(gcode, structure.config, placement.as_bounds())
     values["originalToolCommand"] = structure.original_tool_command
 

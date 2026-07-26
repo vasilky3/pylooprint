@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Mapping, Sequence
 
 from ..core.patching import LineRangePatch, apply_patches, replace_between
+from ..core.placement import ExtrusionBounds
 from ..core.structure import GcodeStructure
 from ..core.template import apply_speed_mode
+from ..errors import UnsafeEjectZoneError
 from .base import BedBounds, EndCodeContext, MachineCode, load_template
 from .bedslinger import ALIGN_FEED_SLOW, BedSlingerProfile
 
@@ -21,6 +23,22 @@ _END_SPLICE_BEFORE = "M220 S100  ; Reset feedrate magnitude"
 #: switch at the top, which gives a repeatable reference to cool down from.
 #: Do not "correct" this to 180.
 PARK_Z = 184.5
+
+#: Plate area the toolhead body covers while it parks at X-13 / Y180 and then
+#: descends to Z1 for the push-off.  The nozzle itself clears the plate at
+#: X-13, but the body overhangs the back-left corner by 15 mm in X and 30 mm in
+#: Y, so anything printed inside this rectangle is struck on the way down.
+EJECT_KEEPOUT_MIN_X = 0.0
+EJECT_KEEPOUT_MAX_X = 15.0
+EJECT_KEEPOUT_MIN_Y = 150.0
+EJECT_KEEPOUT_MAX_Y = 180.0
+
+_CANNOT_EJECT = "Model cannot be ejected. The safe head-descent zone is occupied."
+_KEEPOUT_DESCRIPTION = (
+    f"The toolhead descends onto the plate at the back-left corner "
+    f"(X {EJECT_KEEPOUT_MIN_X:.1f}-{EJECT_KEEPOUT_MAX_X:.1f}, "
+    f"Y {EJECT_KEEPOUT_MIN_Y:.1f}-{EJECT_KEEPOUT_MAX_Y:.1f} mm)"
+)
 
 
 class A1MiniProfile(BedSlingerProfile):
@@ -39,6 +57,31 @@ class A1MiniProfile(BedSlingerProfile):
     start_template_name = "start_a1_mini.gcode"
     end_head_template_name = "end_a1_mini_head.gcode"
     end_tail_template_name = "end_a1_mini_tail.gcode"
+
+    def check_eject_clearance(self, bounds: ExtrusionBounds | None) -> None:
+        """Refuse the build if the model sits where the toolhead comes down.
+
+        The push-off parks the nozzle off the plate at X-13 / Y180 and then
+        drops to Z1.  The nozzle clears the plate, but the toolhead body
+        overhangs the back-left corner, so a model printed there is hit on the
+        way down - which damages both the print and the printer.
+        """
+        if bounds is None:
+            raise UnsafeEjectZoneError(
+                "Model cannot be ejected. The safe head-descent zone could not be "
+                "verified - no extruding moves were found to measure. "
+                f"{_KEEPOUT_DESCRIPTION}; check the model is clear of it."
+            )
+
+        if bounds.overlaps(
+            EJECT_KEEPOUT_MIN_X, EJECT_KEEPOUT_MAX_X, EJECT_KEEPOUT_MIN_Y, EJECT_KEEPOUT_MAX_Y
+        ):
+            raise UnsafeEjectZoneError(
+                f"{_CANNOT_EJECT} {_KEEPOUT_DESCRIPTION}; the model occupies "
+                f"X {bounds.min_x:.2f}-{bounds.max_x:.2f}, "
+                f"Y {bounds.min_y:.2f}-{bounds.max_y:.2f} mm. "
+                "Move the model clear of that corner and re-slice."
+            )
 
     def build_machine_code(
         self,

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from importlib import resources
 from typing import Mapping
 
+from ..core.placement import ExtrusionBounds
 from ..core.structure import GcodeStructure
 from ..core.template import render_start_code
 from ..settings import LoopSettings
@@ -90,6 +91,15 @@ class PrinterProfile(ABC):
     @abstractmethod
     def end_code(self, context: EndCodeContext) -> str:
         """Cool-down and push-off sequence appended after every loop."""
+
+    def check_eject_clearance(self, bounds: ExtrusionBounds | None) -> None:
+        """Refuse the build if the model fouls this printer's eject sequence.
+
+        The default accepts anything, because pushing a part off with the
+        gantry never brings the toolhead down onto the plate.  A profile whose
+        eject sequence *does* descend onto the plate overrides this and raises
+        :class:`~pylooprint.errors.UnsafeEjectZoneError`.
+        """
 
     def build_machine_code(
         self,

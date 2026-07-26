@@ -1,8 +1,14 @@
 """Where the model sits on the bed.
 
-Common analysis step.  The extrusion moves are scanned for their X/Y extent,
-which gives the CoreXY printers their push lanes and the bed slingers a
-fallback model centre when the slicer did not record one.
+Two answers to that question live here, because they are asked for different
+reasons:
+
+* :func:`determine_model_placement` scans the whole file and applies purge/wipe
+  heuristics ported from Looprint.  It drives push-lane centring, and its
+  output has to keep matching what the original tool produced.
+* :func:`measure_extrusion_bounds` measures the isolated print body exactly,
+  with no heuristics.  Collision checks need the truth, and the heuristics
+  above discard whole regions of a bed-slinger plate.
 """
 
 from __future__ import annotations
@@ -24,6 +30,67 @@ _X_RE = re.compile(r"X([\d.]+)")
 _Y_RE = re.compile(r"Y([\d.]+)")
 _Z_RE = re.compile(r"Z([\d.]+)")
 _E_RE = re.compile(r"E([\d.-]+)")
+
+#: Same axes, but signed - a bed-slinger plate starts at a negative X.
+_SIGNED_X_RE = re.compile(r"X(-?[\d.]+)")
+_SIGNED_Y_RE = re.compile(r"Y(-?[\d.]+)")
+_SIGNED_E_RE = re.compile(r"E(-?[\d.]+)")
+
+
+@dataclass(frozen=True)
+class ExtrusionBounds:
+    """Exact bounding box of the extruded model, in plate coordinates."""
+
+    min_x: float
+    max_x: float
+    min_y: float
+    max_y: float
+
+    def overlaps(self, min_x: float, max_x: float, min_y: float, max_y: float) -> bool:
+        """True when this box intersects the given rectangle.
+
+        Touching edges do not count as an overlap.
+        """
+        return (
+            self.min_x < max_x
+            and self.max_x > min_x
+            and self.min_y < max_y
+            and self.max_y > min_y
+        )
+
+
+def measure_extrusion_bounds(print_body: str) -> ExtrusionBounds | None:
+    """Bounding box of every extruding move in the print body.
+
+    Unlike :func:`determine_model_placement` this applies no purge or wipe
+    heuristics: the machine start and end G-code has already been split off, so
+    everything left that extrudes is model.  That makes it the only safe basis
+    for a collision check - the heuristics discard, among other things, every
+    point below X30, which is exactly where a collision would happen.
+
+    ``None`` when the body contains nothing to measure.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+
+    for raw in print_body.split("\n"):
+        line = raw.lstrip()
+        if not (line.startswith("G1") or line.startswith("G0")):
+            continue
+        extrusion = _SIGNED_E_RE.search(line)
+        if extrusion is None or _safe_float(extrusion.group(1)) <= 0:
+            continue
+
+        x_match = _SIGNED_X_RE.search(line)
+        if x_match:
+            xs.append(float(x_match.group(1)))
+        y_match = _SIGNED_Y_RE.search(line)
+        if y_match:
+            ys.append(float(y_match.group(1)))
+
+    if not xs or not ys:
+        return None
+    return ExtrusionBounds(min(xs), max(xs), min(ys), max(ys))
 
 
 @dataclass(frozen=True)
