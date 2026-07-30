@@ -47,15 +47,14 @@ def test_bedslinger_end_code_matches_a_real_looped_file(result_3mf):
     assert produced == expected
 
 
-def test_unsupported_printer_takes_the_fallback_and_warns(result_3mf):
+def test_unsupported_printer_takes_the_fallback_and_warns(golden_project):
     """A CoreXY profile has no in-place patches yet, so it uses Factorian's."""
-    project = ThreeMfProject.open(result_3mf)
+    project = ThreeMfProject.open(golden_project)
     result = build_loops(
         project,
         get_profile("p1"),
         LoopSettings(loops=1, cooldown_temp=18),
-        source_name=result_3mf.name,
-        force=True,
+        source_name=golden_project.name,
     )
     assert any("no in-place machine G-code" in w for w in result.warnings)
     assert "; --- PUSH LANE 1: CENTER" in result.gcode

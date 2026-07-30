@@ -85,7 +85,7 @@ def test_start_code_substitution_covers_all_three_notations():
         '{if filament_type[initial_extruder]=="PLA"}\nM106 P3 S180\n{endif}\n'
         'M220 S100 ;Reset Feedrate'
     )
-    rendered = render_start_code(template, values, speed_mode=100)
+    rendered = render_start_code(template, values)
     assert "M104 S220" in rendered
     assert "T0" in rendered
     assert "M109 S200" in rendered
@@ -97,7 +97,7 @@ def test_start_code_substitution_covers_all_three_notations():
 def test_pla_block_is_dropped_for_other_filaments():
     values = extract_variable_values("", CONFIG.replace("filament_type = PLA", "filament_type = PETG"))
     rendered = render_start_code(
-        '{if filament_type[initial_extruder]=="PLA"}\nM106 P3 S180\n{endif}', values, 100
+        '{if filament_type[initial_extruder]=="PLA"}\nM106 P3 S180\n{endif}', values
     )
     assert "M106 P3 S180" not in rendered
 

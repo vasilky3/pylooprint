@@ -6,21 +6,18 @@ Each loop is::
     <header + config on the first loop, M400 on the others>
     <setup commands, up to and including "; FEATURE: Custom">
     <patched slicer start code>
-    M220 S<speed>
+    M220 S100
     <the print>
     <patched slicer end code: cool down + push off>
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .constants import LOOPRINT_SIGNATURE
 from .structure import GcodeStructure
-
-_M220_RESET_RE = re.compile(r"M220\s+S100\b")
 
 CONTACT = "Nicki.Andersen@gmail.com"
 PROJECT_URL = "https://github.com/NickiAndersen/looprint"
@@ -34,9 +31,7 @@ class LoopPlan:
     start_code: str
     end_code: str
     loops: int
-    speed_mode: int
     source_name: str
-    nozzle_temperature: str | None = None
     generated_at: datetime | None = None
 
 
@@ -77,18 +72,9 @@ def _one_loop(plan: LoopPlan, index: int) -> list[str]:
         parts += ["M400 ; Looprint safety: Wait for buffer clear before next loop", "\n"]
 
     parts += [structure.setup, "\n", plan.start_code, "\n"]
-    parts += _print_section(plan)
+    parts += ["M220 S100 ; Set speed mode\n", structure.print_body, "\n"]
     parts += [plan.end_code, "\n"]
     return parts
-
-
-def _print_section(plan: LoopPlan) -> list[str]:
-    body = plan.structure.print_body
-    if plan.speed_mode != 100:
-        # The slicer sprinkles M220 S100 through the print; leaving them would
-        # undo the requested speed part-way through a loop.
-        body = _M220_RESET_RE.sub(f"M220 S{plan.speed_mode}", body)
-    return [f"M220 S{plan.speed_mode} ; Set speed mode\n", body, "\n"]
 
 
 def _iso(stamp: datetime) -> str:

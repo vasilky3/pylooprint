@@ -14,11 +14,6 @@ from .printers import available_profiles, get_profile
 from .settings import (
     COOLDOWN_WARNING_THRESHOLD,
     DEFAULT_LOOPS,
-    DEFAULT_PUSH_LANE_OFFSET,
-    DEFAULT_PUSH_SPEED,
-    DEFAULT_SPEED_MODE,
-    DEFAULT_SWEEP_SPEED,
-    DEFAULT_SWEEP_Z,
     DEFAULT_TEMP,
     MAX_LOOPS,
     MAX_TEMP,
@@ -55,43 +50,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_TEMP,
         help=f"bed temperature to cool down to before the push-off (default: {DEFAULT_TEMP})",
     )
-    parser.add_argument(
-        "--speed",
-        type=int,
-        default=DEFAULT_SPEED_MODE,
-        help=f"print speed percentage applied to every loop (default: {DEFAULT_SPEED_MODE})",
-    )
-
-    corexy = parser.add_argument_group("P1 / X1 only")
-    corexy.add_argument(
-        "--push-lane-offset",
-        type=float,
-        default=DEFAULT_PUSH_LANE_OFFSET,
-        help=f"distance of the outer push lanes from the model centre (default: {DEFAULT_PUSH_LANE_OFFSET})",
-    )
-    corexy.add_argument(
-        "--push-speed",
-        type=float,
-        default=DEFAULT_PUSH_SPEED,
-        help=f"push-off feedrate in mm/min (default: {DEFAULT_PUSH_SPEED})",
-    )
-    corexy.add_argument("--sweep", action="store_true", help="add a full-bed sweep after the push-off")
-    corexy.add_argument("--sweep-speed", type=float, default=DEFAULT_SWEEP_SPEED)
-    corexy.add_argument("--sweep-z", type=float, default=DEFAULT_SWEEP_Z)
-    corexy.add_argument(
-        "--no-purge",
-        action="store_true",
-        help="use the start code that skips the filament flush",
-    )
-
-    a1 = parser.add_argument_group("A1 only")
-    a1.add_argument(
-        "--negative-z",
-        action="store_true",
-        help="add the negative-Z release sequence (only without a Z-axis stiffener mod)",
-    )
-
-    parser.add_argument("--force", action="store_true", help="loop a file that already carries a Looprint marker")
     parser.add_argument("--dry-run", action="store_true", help="report what would be built without writing a file")
     parser.add_argument("--version", action="version", version=f"pylooprint {__version__}")
     return parser
@@ -126,22 +84,9 @@ def _run(args: argparse.Namespace) -> tuple[BuildResult, Path]:
     project = ThreeMfProject.open(args.input)
     profile = get_profile(args.printer) if args.printer else detect_printer(project)
 
-    settings = LoopSettings(
-        loops=args.loops,
-        cooldown_temp=args.temp,
-        speed_mode=args.speed,
-        push_lane_offset=args.push_lane_offset,
-        push_speed=args.push_speed,
-        sweep_enabled=args.sweep,
-        sweep_speed=args.sweep_speed,
-        sweep_z=args.sweep_z,
-        purge_enabled=not args.no_purge,
-        negative_z_enabled=args.negative_z,
-    )
+    settings = LoopSettings(loops=args.loops, cooldown_temp=args.temp)
 
-    result = build_loops(
-        project, profile, settings, source_name=args.input.name, force=args.force
-    )
+    result = build_loops(project, profile, settings, source_name=args.input.name)
 
     destination = args.output or _default_output(args.input, args.loops)
     if not args.dry_run:

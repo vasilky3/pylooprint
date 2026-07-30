@@ -10,7 +10,6 @@ directions would drive the gantry into the print.
 
 from __future__ import annotations
 
-from ..settings import LoopSettings
 from .base import EndCodeContext, PrinterProfile, load_template
 
 #: Fixed X feedrate of the wiggle sweep, as in Factorian's End_A1 templates.
@@ -49,20 +48,17 @@ class BedSlingerProfile(PrinterProfile):
             "@ALIGN_FEED@", str(align_feed)
         )
 
-    def wiggle_sweep(self, speed: float = WIGGLE_SPEED) -> str:
+    def wiggle_sweep(self) -> str:
         """Sweep the released part off the plate at bed level."""
         lines = []
         for y in self.wiggle_y_positions:
             lines.append(
                 f"G1 Y{y} F2000\t;move bed back a little\n"
                 f"G1 X{_format_number(self.wiggle_x_right)} F800\t;move to the right\n"
-                f"G1 X{_format_number(self.wiggle_x_left)}\tF{_format_number(speed)}\t;move back to the left\n"
+                f"G1 X{_format_number(self.wiggle_x_left)}\tF{_format_number(WIGGLE_SPEED)}\t;move back to the left\n"
             )
         lines.append(self.wiggle_final_line)
         return "".join(lines)
-
-    def start_code(self, settings: LoopSettings) -> str:
-        return load_template(self.start_template_name)
 
     def end_code(self, context: EndCodeContext) -> str:
         temp = context.settings.cooldown_temp
@@ -72,20 +68,14 @@ class BedSlingerProfile(PrinterProfile):
             .replace("@PUSH@", self.push_gcode())
         )
         body += "\n" + self.wiggle_sweep()
-        body += self.extra_release_sequence(context)
         body += load_template(self.end_tail_template_name)
         return f"{self.preset_header(temp)}\n{body}"
-
-    def extra_release_sequence(self, context: EndCodeContext) -> str:
-        """Hook for optional machine-specific releases (A1 negative Z)."""
-        return ""
 
     def preset_header(self, temp: int) -> str:
         actual = self.apply_temp_offset(temp)
         return f";===== {self.name} PRESET (Temp: {temp}°C actual: {actual}°C, Y-axis push-off) ====="
 
-    # Template file names, supplied by the concrete profiles.
-    start_template_name: str
+    # End-code template file names, supplied by the concrete profiles.
     end_head_template_name: str
     end_tail_template_name: str
 

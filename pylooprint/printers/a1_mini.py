@@ -97,7 +97,7 @@ class A1MiniProfile(BedSlingerProfile):
         """
         start_code = apply_patches(structure.slicer_start_code, self.start_code_patches())
         return MachineCode(
-            start_code=apply_speed_mode(start_code, context.settings.speed_mode),
+            start_code=apply_speed_mode(start_code),
             end_code=self.patch_slicer_end_code(structure.slicer_end_code, context),
         )
 

@@ -55,7 +55,6 @@ def build_loops(
     *,
     source_name: str,
     generated_at: datetime | None = None,
-    force: bool = False,
 ) -> BuildResult:
     """Turn one sliced plate into an ``n``-times looped plate."""
     gcode = project.gcode
@@ -63,10 +62,9 @@ def build_loops(
 
     watermark = next((mark for mark in LOOPRINT_WATERMARKS if mark in gcode), None)
     if watermark:
-        message = f"{project.path.name} has already been looped (found {watermark!r})"
-        if not force:
-            raise AlreadyLoopedError(message + "; pass --force to loop it anyway")
-        warnings.append(message)
+        raise AlreadyLoopedError(
+            f"{project.path.name} has already been looped (found {watermark!r})"
+        )
 
     max_layer_z, from_header = _read_max_layer_z(gcode, warnings)
     structure = split_gcode(gcode)
@@ -101,9 +99,7 @@ def build_loops(
         start_code=machine_code.start_code,
         end_code=end_code,
         loops=settings.loops,
-        speed_mode=settings.speed_mode,
         source_name=source_name,
-        nozzle_temperature=_as_text(values.get("nozzle_temperature_initial_layer")),
         generated_at=generated_at,
     )
 
@@ -132,7 +128,3 @@ def _read_max_layer_z(gcode: str, warnings: list[str]) -> tuple[float, bool]:
         "check the generated push-off height before printing"
     )
     return FALLBACK_MAX_Z_HEIGHT_MM, False
-
-
-def _as_text(value: object) -> str | None:
-    return str(value) if value else None
