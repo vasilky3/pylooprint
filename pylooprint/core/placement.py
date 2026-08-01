@@ -93,6 +93,87 @@ def measure_extrusion_bounds(print_body: str) -> ExtrusionBounds | None:
     return ExtrusionBounds(min(xs), max(xs), min(ys), max(ys))
 
 
+def extrusion_enters_zone(
+    print_body: str, min_x: float, max_x: float, min_y: float, max_y: float
+) -> tuple[float, float] | None:
+    """A point where the model extrudes inside the rectangle, or ``None``.
+
+    A bounding box is the wrong tool for this question: a plate whose model
+    reaches the left edge in one place and the back edge in another has a box
+    that covers the corner while leaving the corner itself empty.  This walks
+    the actual moves instead.
+
+    Whole *segments* are tested, not just their endpoints - diagonal infill can
+    cross a small keep-out rectangle with both ends outside it.  Coordinates are
+    modal, so the position is tracked across travel moves too.
+    """
+    x: float | None = None
+    y: float | None = None
+
+    for raw in print_body.split("\n"):
+        line = raw.lstrip()
+        if not (line.startswith("G1") or line.startswith("G0")):
+            continue
+
+        x_match = _SIGNED_X_RE.search(line)
+        y_match = _SIGNED_Y_RE.search(line)
+        next_x = float(x_match.group(1)) if x_match else x
+        next_y = float(y_match.group(1)) if y_match else y
+
+        extrusion = _SIGNED_E_RE.search(line)
+        extruding = extrusion is not None and _safe_float(extrusion.group(1)) > 0
+        if extruding and next_x is not None and next_y is not None:
+            # Before the first positioned move the previous point is unknown, so
+            # the move can only be judged by where it ends.
+            start_x = x if x is not None else next_x
+            start_y = y if y is not None else next_y
+            hit = _segment_inside(start_x, start_y, next_x, next_y, min_x, max_x, min_y, max_y)
+            if hit is not None:
+                return hit
+
+        x, y = next_x, next_y
+
+    return None
+
+
+def _segment_inside(
+    x0: float, y0: float, x1: float, y1: float,
+    min_x: float, max_x: float, min_y: float, max_y: float,
+) -> tuple[float, float] | None:
+    """Liang-Barsky clip: a point of the segment strictly inside the rectangle.
+
+    Strictly, so that a move running exactly along an edge is not a collision -
+    the same rule :meth:`ExtrusionBounds.overlaps` uses for touching edges.
+    """
+    dx, dy = x1 - x0, y1 - y0
+    enter, leave = 0.0, 1.0
+
+    for edge, distance in ((-dx, x0 - min_x), (dx, max_x - x0), (-dy, y0 - min_y), (dy, max_y - y0)):
+        if edge == 0:
+            if distance < 0:
+                return None  # parallel to this edge, and on the outside of it
+            continue
+        crossing = distance / edge
+        if edge < 0:
+            if crossing > leave:
+                return None
+            enter = max(enter, crossing)
+        else:
+            if crossing < enter:
+                return None
+            leave = min(leave, crossing)
+
+    if enter > leave:
+        return None
+    # The middle of the part that lies within the rectangle: on a genuine
+    # crossing it is strictly inside, on a graze along an edge it is not.
+    middle = (enter + leave) / 2
+    point = (x0 + dx * middle, y0 + dy * middle)
+    if min_x < point[0] < max_x and min_y < point[1] < max_y:
+        return point
+    return None
+
+
 @dataclass(frozen=True)
 class ModelPlacement:
     """Bounding box of the printed model plus the chosen push direction."""

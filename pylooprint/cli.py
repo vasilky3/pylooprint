@@ -11,17 +11,16 @@ from .core.project import ThreeMfProject
 from .errors import LooprintError
 from .pipeline import BuildResult, build_loops, detect_printer
 from .printers import available_profiles, get_profile
+from .printers.bedslinger import SHAKE_MAX_HZ, SHAKE_MIN_HZ
 from .settings import (
     COOLDOWN_WARNING_THRESHOLD,
+    DEFAULT_HOLD_SECONDS,
     DEFAULT_LOOPS,
-    DEFAULT_PUSH_LANE_OFFSET,
-    DEFAULT_PUSH_SPEED,
-    DEFAULT_SPEED_MODE,
-    DEFAULT_SWEEP_SPEED,
-    DEFAULT_SWEEP_Z,
     DEFAULT_TEMP,
+    MAX_HOLD_SECONDS,
     MAX_LOOPS,
     MAX_TEMP,
+    MIN_HOLD_SECONDS,
     MIN_LOOPS,
     MIN_TEMP,
     LoopSettings,
@@ -56,42 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"bed temperature to cool down to before the push-off (default: {DEFAULT_TEMP})",
     )
     parser.add_argument(
-        "--speed",
+        "--hold",
         type=int,
-        default=DEFAULT_SPEED_MODE,
-        help=f"print speed percentage applied to every loop (default: {DEFAULT_SPEED_MODE})",
+        default=DEFAULT_HOLD_SECONDS,
+        metavar="SECONDS",
+        help=(
+            "A1/A1 Mini: seconds to hold at the park height after the cool-down, before "
+            f"the bed shake (default: {DEFAULT_HOLD_SECONDS}; 0 skips the wait, the shake always runs)"
+        ),
     )
-
-    corexy = parser.add_argument_group("P1 / X1 only")
-    corexy.add_argument(
-        "--push-lane-offset",
-        type=float,
-        default=DEFAULT_PUSH_LANE_OFFSET,
-        help=f"distance of the outer push lanes from the model centre (default: {DEFAULT_PUSH_LANE_OFFSET})",
-    )
-    corexy.add_argument(
-        "--push-speed",
-        type=float,
-        default=DEFAULT_PUSH_SPEED,
-        help=f"push-off feedrate in mm/min (default: {DEFAULT_PUSH_SPEED})",
-    )
-    corexy.add_argument("--sweep", action="store_true", help="add a full-bed sweep after the push-off")
-    corexy.add_argument("--sweep-speed", type=float, default=DEFAULT_SWEEP_SPEED)
-    corexy.add_argument("--sweep-z", type=float, default=DEFAULT_SWEEP_Z)
-    corexy.add_argument(
-        "--no-purge",
-        action="store_true",
-        help="use the start code that skips the filament flush",
-    )
-
-    a1 = parser.add_argument_group("A1 only")
-    a1.add_argument(
-        "--negative-z",
-        action="store_true",
-        help="add the negative-Z release sequence (only without a Z-axis stiffener mod)",
-    )
-
-    parser.add_argument("--force", action="store_true", help="loop a file that already carries a Looprint marker")
     parser.add_argument("--dry-run", action="store_true", help="report what would be built without writing a file")
     parser.add_argument("--version", action="version", version=f"pylooprint {__version__}")
     return parser
@@ -118,6 +90,8 @@ def _validate(args: argparse.Namespace) -> None:
         raise LooprintError(f"--loops must be between {MIN_LOOPS} and {MAX_LOOPS}")
     if not MIN_TEMP <= args.temp <= MAX_TEMP:
         raise LooprintError(f"--temp must be between {MIN_TEMP} and {MAX_TEMP}")
+    if not MIN_HOLD_SECONDS <= args.hold <= MAX_HOLD_SECONDS:
+        raise LooprintError(f"--hold must be between {MIN_HOLD_SECONDS} and {MAX_HOLD_SECONDS}")
     if not args.input.exists():
         raise LooprintError(f"{args.input} does not exist")
 
@@ -126,22 +100,9 @@ def _run(args: argparse.Namespace) -> tuple[BuildResult, Path]:
     project = ThreeMfProject.open(args.input)
     profile = get_profile(args.printer) if args.printer else detect_printer(project)
 
-    settings = LoopSettings(
-        loops=args.loops,
-        cooldown_temp=args.temp,
-        speed_mode=args.speed,
-        push_lane_offset=args.push_lane_offset,
-        push_speed=args.push_speed,
-        sweep_enabled=args.sweep,
-        sweep_speed=args.sweep_speed,
-        sweep_z=args.sweep_z,
-        purge_enabled=not args.no_purge,
-        negative_z_enabled=args.negative_z,
-    )
+    settings = LoopSettings(loops=args.loops, cooldown_temp=args.temp, hold_seconds=args.hold)
 
-    result = build_loops(
-        project, profile, settings, source_name=args.input.name, force=args.force
-    )
+    result = build_loops(project, profile, settings, source_name=args.input.name)
 
     destination = args.output or _default_output(args.input, args.loops)
     if not args.dry_run:
@@ -165,6 +126,9 @@ def _report(args: argparse.Namespace, result: BuildResult, destination: Path) ->
     if result.placement:
         print(f"placement   : {result.placement.direction} (X {result.placement.min_x:.1f}..{result.placement.max_x:.1f})")
     print(f"cool-down   : {args.temp} C -> commanded {result.profile.apply_temp_offset(args.temp)} C")
+    shake = f"{SHAKE_MIN_HZ:.0f}-{SHAKE_MAX_HZ:.0f} Hz bed shake"
+    wait = f"{args.hold} s, then a {shake}" if args.hold else f"no wait, {shake} only"
+    print(f"hold        : {wait}")
     print(f"output size : {len(result.gcode) / 1024 / 1024:.1f} MB of G-code")
 
     for warning in result.warnings:

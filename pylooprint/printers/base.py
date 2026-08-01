@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from importlib import resources
 from typing import Mapping
 
-from ..core.placement import ExtrusionBounds
 from ..core.structure import GcodeStructure
 from ..core.template import render_start_code
 from ..settings import LoopSettings
@@ -75,6 +74,8 @@ class PrinterProfile(ABC):
     temp_offset: int = 0
     #: How many ``M190`` lines are needed to outlast the firmware's wait timeout.
     m190_repeat: int = 1
+    #: Start-code template shipped for this machine.
+    start_template_name: str
 
     def apply_temp_offset(self, temp: int) -> int:
         """Bed temperature to actually command for a requested cool-down temp."""
@@ -84,15 +85,19 @@ class PrinterProfile(ABC):
         """The repeated ``M190`` wait that holds the print until it releases."""
         return "\n".join([f"M190 S{self.apply_temp_offset(temp)}"] * self.m190_repeat)
 
-    @abstractmethod
-    def start_code(self, settings: LoopSettings) -> str:
+    def start_code(self) -> str:
         """Raw start-code template, before variable substitution."""
+        return load_template(self.start_template_name)
 
     @abstractmethod
     def end_code(self, context: EndCodeContext) -> str:
         """Cool-down and push-off sequence appended after every loop."""
 
-    def check_eject_clearance(self, bounds: ExtrusionBounds | None) -> None:
+    def end_code_warnings(self, context: EndCodeContext) -> tuple[str, ...]:
+        """Notes the end-code generator produced - e.g. auto-adjusted push lanes."""
+        return ()
+
+    def check_eject_clearance(self, print_body: str) -> None:
         """Refuse the build if the model fouls this printer's eject sequence.
 
         The default accepts anything, because pushing a part off with the
@@ -118,9 +123,9 @@ class PrinterProfile(ABC):
         overrides this and uses ``structure.slicer_start_code`` /
         ``structure.slicer_end_code``; see :class:`~pylooprint.printers.a1_mini.A1MiniProfile`.
         """
-        speed_mode = context.settings.speed_mode
         return MachineCode(
-            start_code=render_start_code(self.start_code(context.settings), values, speed_mode),
+            start_code=render_start_code(self.start_code(), values),
             end_code=self.end_code(context),
-            warnings=(f"{self.name} has no in-place machine G-code yet; using the Factorian templates",),
+            warnings=(f"{self.name} has no in-place machine G-code yet; using the Factorian templates",)
+            + self.end_code_warnings(context),
         )

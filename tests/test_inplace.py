@@ -145,15 +145,6 @@ def test_each_loop_repeats_the_whole_plate(golden_project, loops):
     assert gcode.count("M400 ; Looprint safety: Wait for buffer clear before next loop") == loops - 1
 
 
-def test_speed_mode_rewrites_the_print_but_not_the_end_code(golden_project):
-    gcode = _build(golden_project, speed_mode=124).gcode
-    assert "M220 S124 ;Reset Feedrate (Looprint: 124% speed)" in gcode
-    assert "M220 S124 ; Set speed mode" in gcode
-    # The machine end code's own reset belongs to finishing, not printing.
-    assert "M220 S100  ; Reset feedrate magnitude" in _machine_end_code(gcode)
-    assert "M220 S100 ; Reset to standard speed" in gcode
-
-
 def test_a_missing_anchor_is_reported_not_ignored():
     profile = get_profile("a1mini")
     with pytest.raises(PatchError):

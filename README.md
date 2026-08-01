@@ -36,9 +36,18 @@ looping:
   first (timelapse, filament unload, hotend off) is kept, the Z-lift is carried
   over, the gantry parks up against the mechanical switch at the top (Z184.5 —
   deliberately above the 180 mm printable height, do not "correct" it), then the
-  cool-down, push-off and wiggle sweep run, and the slicer's own reset and finish
-  sound close the loop. The move to the model centre crawls at F300 rather than a
-  rapid, so the toolhead cannot knock a tall part over.
+  cool-down, the release hold, the push-off and the wiggle sweep run, and the
+  slicer's own reset and finish sound close the loop. The move to the model
+  centre crawls at F300 rather than a rapid, so the toolhead cannot knock a tall
+  part over.
+* **A release hold sits between the cool-down and the push-off** (A1 / A1 Mini).
+  Once the bed reaches its target the printer waits `--hold` seconds and then
+  shakes the bed through a 15→60 Hz frequency sweep, the way an input-shaping
+  run does, to break the part loose before anything pushes it. Nothing in that
+  block moves Z or X: the toolhead has to stay parked at Z184.5, which is what
+  keeps a limit-switch fan mod running for the whole hold. The shake uses
+  relative moves and ends exactly where it started, so the eject keep-out zone
+  below still describes the right patch of plate.
 
 Everything the printer profile configured — flow calibration, bed levelling,
 build-plate detection — survives untouched.
@@ -51,8 +60,8 @@ and end code are thrown away and replaced with Factorian Designs' start/end
 G-code, which is what the original web tool does. This is a stopgap; each printer
 loses the fallback as its in-place patches are added.
 
-Either way the loops are assembled by the same code, so the banner, the per-loop
-markers and the speed handling are identical — only the machine G-code differs.
+Either way the loops are assembled by the same code, so the banner and the
+per-loop markers are identical — only the machine G-code differs.
 
 ---
 
@@ -76,7 +85,7 @@ These run identically for a P1, X1, A1 and A1 Mini:
 | 6. Keep the extruder | `structure.py` | Recover `T0`..`T3`, otherwise the loop inherits `T255` from the unload sequence and never extrudes |
 | 7. Read the slicer settings | `config_block.py`, `variables.py` | Parse `CONFIG_BLOCK` into values, with G-code and hard-coded fallbacks |
 | 8. Render the templates | `template.py` | `[name]`, `{expression}` and `{if ...}{endif}` substitution, including the `{max_layer_z ± n}` arithmetic |
-| 9. Assemble the loops | `loop_builder.py` | Banner, per-loop header/config or `M400`, setup, start code, `M220 S<speed>`, print, end code |
+| 9. Assemble the loops | `loop_builder.py` | Banner, per-loop header/config or `M400`, setup, start code, `M220 S100`, print, end code |
 | 10. Repack | `project.py` | Write the new plate G-code back into a copy of the zip |
 
 Step 8 is where the two strategies part company, and **the profile decides which
@@ -100,7 +109,7 @@ printers/
   base.py          PrinterProfile: the contract (bed, temp offset, start code, end code)
   bedslinger.py    A1 family engine  - bed moves in Y, part is pushed by driving the bed forward
   corexy.py        P1/X1 family engine - bed is fixed, gantry pushes along Y in three X lanes
-  a1.py            A1        (N2S)     bed -48..256 x 0..262, 45x M190, optional negative-Z release
+  a1.py            A1        (N2S)     bed -48..256 x 0..262, 45x M190, 6-position wiggle sweep
   a1_mini.py       A1 Mini   (N1)      bed -13..180 x 0..185, 50x M190, 4-position wiggle sweep
   p1.py            P1/P1S    (C11)     bed 10..246 x 0..256, 30x M190, splices lanes into Factorian's template
   x1.py            X1/X1C    (BL-P001) same lanes as P1 + filament cutter and aux-fan sequencing
@@ -117,11 +126,33 @@ What genuinely differs per machine:
 | Bed sensor offset | −4 °C | −4 °C | none | none |
 | `M190` repeats | 45 | 50 | 30 | 30 |
 | Z-drop threshold | 41 mm | 41 mm | 31 mm | 31 mm |
-| Sweep | wiggle, always on | wiggle, always on | full bed, opt-in | full bed, opt-in |
-| Extras | negative-Z release | — | purge/no-purge start | cutter sequence, aux fan |
+| Sweep | wiggle, 6 positions | wiggle, 4 positions | — | — |
+| Release hold | yes | yes | — | — |
+| Eject keep-out | — | X 0–15, Y 150–180 | — | — |
+| Extras | — | in-place patching | splices lanes into Factorian's template | cutter sequence, aux fan |
 
 Adding a printer means one module plus one entry in `printers/__init__.py`;
 nothing in `core/` changes.
+
+### The A1 Mini eject keep-out
+
+The A1 Mini push-off parks the nozzle off the plate at X-13 / Y180 and then
+drops the toolhead to Z1. The nozzle clears the plate, but the toolhead *body*
+overhangs the back-left corner by 15 mm in X and 30 mm in Y, so anything printed
+in `X 0–15, Y 150–180` is struck on the way down. A build whose model prints
+there is refused before any G-code is generated:
+
+```
+error: Model cannot be ejected. The safe head-descent zone is occupied. ...
+the model prints inside it, at X 8.40, Y 162.10 mm.
+```
+
+The check walks the actual extruding moves — whole segments, so a diagonal line
+crossing the corner counts even when neither of its ends is inside it. It
+deliberately does *not* use the model's bounding box: a plate that reaches the
+left edge at the front and the back edge in the middle has a box covering a
+corner it never touches, and judging by the box refuses a perfectly good file.
+Brim and skirt are material too, so they are measured like anything else.
 
 ---
 
@@ -139,24 +170,22 @@ puts it on your PATH while still running the files in this folder (undo with
 | Option | Default | Meaning |
 |---|---|---|
 | `-n, --loops` | 1 | how many copies |
-| `-t, --temp` | 18 | bed temperature to cool down to before the push-off |
+| `-t, --temp` | 23 | bed temperature to cool down to before the push-off |
+| `--hold` | 300 | A1/A1 Mini: seconds to wait at the park height before the bed shake (`0` skips the wait; the shake always runs) |
 | `-p, --printer` | auto | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
-| `--speed` | 100 | print speed percentage applied to every loop |
-| `--push-lane-offset` | 30 | P1/X1: distance of the outer lanes from the model centre |
-| `--push-speed` | 300 | P1/X1: push feedrate in mm/min |
-| `--sweep` | off | P1/X1: full-bed sweep after the push |
-| `--no-purge` | off | P1/X1: start code without the filament flush |
-| `--negative-z` | off | A1 only, and only without a Z-axis stiffener mod |
-| `--force` | off | process a file that already carries a Looprint marker |
+| `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |
 | `--dry-run` | off | report without writing |
+
+A file that already carries a Looprint watermark is refused — loop the original,
+not the output.
 
 Example:
 
 ```bash
-# twenty copies, ejecting each one, cooling to 18 C first
-python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -n 20 -t 18 -o batch.gcode.3mf
+# twenty copies, ejecting each one, cooling to 23 C first
+python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -n 20 -o batch.gcode.3mf
 
-# one copy that dismounts itself
+# one copy that dismounts itself, with a warmer release
 python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -t 28
 ```
 
@@ -176,13 +205,20 @@ The suite is anchored on two real reference files:
   sequence). pylooprint reproduces that file's **machine start and end code byte
   for byte** from the unmodified slicer file; the loop scaffolding around it is
   Looprint's. Also covers the purge patch, the carried-over Z-lift, the slow
-  align move, multi-loop repetition and speed handling.
+  align move and multi-loop repetition.
 * **`test_factorian_fallback.py`** — pins the fallback path: the generated A1
   Mini end code is compared against the one embedded in `Gcode/result.gcode.3mf`
   (byte for byte), and a CoreXY printer is shown to take the fallback and warn.
 * **`test_core.py` / `test_printers.py`** — unit coverage of the shared
   machinery (config parsing, structure split, template engine, placement) and of
-  what each profile contributes (bed bounds, temp offset, push lanes, sweep).
+  what each profile contributes (bed bounds, temp offset, push lanes, wiggle sweep).
+* **`test_eject_zone.py`** — the A1 Mini keep-out rule, against three real sliced
+  plates in `tests/test gcode/`: a full-plate cube that must be refused, a cube
+  shifted clear of the corner, and the plate whose bounding box covers the corner
+  while its material stays clear of it.
+* **`test_release_hold.py`** — the wait and the frequency sweep: that the block
+  never moves Z, that the bed returns to where it started, and that the shake
+  survives `--hold 0`.
 * **`test_cli.py`** — end-to-end runs through the console entry point.
 
 Tests that need the sample files skip themselves if the `Gcode` folder is absent.
@@ -195,8 +231,9 @@ Tests that need the sample files skip themselves if the `Gcode` folder is absent
 * Plain `.gcode` input is not accepted — only `.gcode.3mf`. The original had a
   second, subtly different code path for bare G-code; one path is easier to keep
   correct.
-* `--force` exists so an already-looped file can be reprocessed; the web tool
-  always refused.
+* No per-build tuning of the push-off (lane offset, push speed, print speed,
+  full-bed sweep, purge-free start, negative-Z release). Each one is either a
+  fixed value or dropped, so there is one code path per printer to keep correct.
 
 Credit for the automation concept: **Factorian Designs**. Original tool:
 **Nicki Andersen**, MIT.

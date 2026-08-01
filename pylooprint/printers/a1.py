@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import BedBounds, EndCodeContext, load_template
+from .base import BedBounds
 from .bedslinger import BedSlingerProfile
 
 
@@ -22,9 +22,3 @@ class A1Profile(BedSlingerProfile):
     start_template_name = "start_a1.gcode"
     end_head_template_name = "end_a1_head.gcode"
     end_tail_template_name = "end_a1_tail.gcode"
-
-    def extra_release_sequence(self, context: EndCodeContext) -> str:
-        """Optional negative-Z release; only safe without a Z-axis stiffener mod."""
-        if not context.settings.negative_z_enabled:
-            return ""
-        return "\n\n" + load_template("a1_negative_z.gcode")

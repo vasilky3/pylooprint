@@ -11,7 +11,7 @@ from datetime import datetime
 
 from .core.constants import FALLBACK_MAX_Z_HEIGHT_MM, LOOPRINT_WATERMARKS, MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_RE
 from .core.loop_builder import LoopPlan, build_looped_gcode
-from .core.placement import ModelPlacement, determine_model_placement, measure_extrusion_bounds
+from .core.placement import ModelPlacement, determine_model_placement
 from .core.project import PROJECT_SETTINGS, SLICE_INFO, ThreeMfProject
 from .core.structure import split_gcode
 from .core.template import centre_coordinates, resolve_max_layer_z, substitute_first_layer_centre
@@ -55,7 +55,6 @@ def build_loops(
     *,
     source_name: str,
     generated_at: datetime | None = None,
-    force: bool = False,
 ) -> BuildResult:
     """Turn one sliced plate into an ``n``-times looped plate."""
     gcode = project.gcode
@@ -63,17 +62,16 @@ def build_loops(
 
     watermark = next((mark for mark in LOOPRINT_WATERMARKS if mark in gcode), None)
     if watermark:
-        message = f"{project.path.name} has already been looped (found {watermark!r})"
-        if not force:
-            raise AlreadyLoopedError(message + "; pass --force to loop it anyway")
-        warnings.append(message)
+        raise AlreadyLoopedError(
+            f"{project.path.name} has already been looped (found {watermark!r})"
+        )
 
     max_layer_z, from_header = _read_max_layer_z(gcode, warnings)
     structure = split_gcode(gcode)
 
     # Refuse before generating anything if the model sits where this printer
     # brings the toolhead down to eject the part.
-    profile.check_eject_clearance(measure_extrusion_bounds(structure.print_body))
+    profile.check_eject_clearance(structure.print_body)
 
     bed = profile.bed_bounds
     placement = determine_model_placement(gcode, bed.min_x, bed.max_x, bed.min_y, bed.max_y)
@@ -101,9 +99,7 @@ def build_loops(
         start_code=machine_code.start_code,
         end_code=end_code,
         loops=settings.loops,
-        speed_mode=settings.speed_mode,
         source_name=source_name,
-        nozzle_temperature=_as_text(values.get("nozzle_temperature_initial_layer")),
         generated_at=generated_at,
     )
 
@@ -132,7 +128,3 @@ def _read_max_layer_z(gcode: str, warnings: list[str]) -> tuple[float, bool]:
         "check the generated push-off height before printing"
     )
     return FALLBACK_MAX_Z_HEIGHT_MM, False
-
-
-def _as_text(value: object) -> str | None:
-    return str(value) if value else None

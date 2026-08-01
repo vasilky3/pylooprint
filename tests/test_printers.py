@@ -27,7 +27,7 @@ def test_gcode_header_detection_prefers_a1_mini_over_a1():
 @pytest.mark.parametrize("key", sorted(available_profiles()))
 def test_every_profile_produces_a_start_and_end_code(key):
     profile = get_profile(key)
-    assert profile.start_code(CONTEXT.settings).strip()
+    assert profile.start_code().strip()
     assert profile.end_code(CONTEXT).strip()
 
 
@@ -62,22 +62,6 @@ def test_a1_mini_wiggle_stays_inside_its_smaller_bed():
     assert "G1 X256 F800" in a1 and "G1 X-48\tF2000" in a1
 
 
-def test_negative_z_release_is_opt_in_and_a1_only():
-    settings = LoopSettings(loops=1, cooldown_temp=18, negative_z_enabled=True)
-    context = EndCodeContext(settings=settings)
-    assert "G1 Z-17 F600" in get_profile("a1").end_code(context)
-    assert "G1 Z-17 F600" not in get_profile("a1mini").end_code(context)
-    assert "G1 Z-17 F600" not in get_profile("a1").end_code(CONTEXT)
-
-
-def test_corexy_sweep_is_opt_in():
-    assert "FULL BED SWEEP" not in get_profile("p1").end_code(CONTEXT)
-    settings = LoopSettings(loops=1, cooldown_temp=18, sweep_enabled=True)
-    context = EndCodeContext(settings=settings)
-    code = get_profile("p1").end_code(context)
-    assert code.count("; --- PASS ") == 7
-
-
 def test_push_lanes_follow_the_detected_model():
     context = EndCodeContext(
         settings=LoopSettings(loops=1, cooldown_temp=18),
@@ -88,12 +72,26 @@ def test_push_lanes_follow_the_detected_model():
     assert (lanes.centre_x, lanes.left_x, lanes.right_x) == ("120.0", "90.0", "150.0")
 
 
-def test_push_lane_offset_is_clamped_to_the_bed():
-    context = EndCodeContext(
-        settings=LoopSettings(loops=1, cooldown_temp=18, push_lane_offset=60),
+def _lane_offset_context() -> EndCodeContext:
+    """A model close enough to the left edge that the 30 mm offset cannot fit."""
+    return EndCodeContext(
+        settings=LoopSettings(loops=1, cooldown_temp=18),
         model_min_x=20.0,
         model_max_x=40.0,
     )
-    lanes = get_profile("p1").push_lanes(context)
+
+
+def test_push_lanes_are_pulled_back_from_the_bed_edge():
+    profile = get_profile("p1")
+    lanes = profile.push_lanes(_lane_offset_context())
+    # Centre 30, bed starts at 10, so only 20 mm of offset fits.
+    assert (lanes.left_x, lanes.centre_x, lanes.right_x) == ("10.0", "30.0", "50.0")
+    assert float(lanes.left_x) >= profile.bed_bounds.min_x
     assert lanes.warning is not None
-    assert float(lanes.left_x) >= get_profile("p1").bed_bounds.min_x
+
+
+def test_an_adjusted_lane_offset_is_reported():
+    """The auto-adjustment changes the push geometry, so the user hears about it."""
+    warnings = get_profile("p1").end_code_warnings(_lane_offset_context())
+    assert any("auto-adjusted" in warning for warning in warnings)
+    assert get_profile("p1").end_code_warnings(EndCodeContext(settings=LoopSettings())) == ()

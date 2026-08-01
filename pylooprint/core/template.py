@@ -51,13 +51,13 @@ VOLUMETRIC_DIVISOR = 2.4053
 VOLUMETRIC_FALLBACK = "1200"
 
 
-def render_start_code(template: str, values: Mapping[str, object], speed_mode: int) -> str:
+def render_start_code(template: str, values: Mapping[str, object]) -> str:
     """Fill a printer start-code template with values from the sliced file."""
     result = template
     result = _apply_conditionals(result, values)
     result = _apply_expressions(result, values)
     result = _apply_brackets(result, values)
-    result = apply_speed_mode(result, speed_mode)
+    result = apply_speed_mode(result)
     result = _apply_trailing_expressions(result, values)
     return result
 
@@ -150,9 +150,9 @@ def _apply_brackets(text: str, values: Mapping[str, object]) -> str:
     return text.replace("[initial_no_support_extruder]", extruder)
 
 
-def apply_speed_mode(text: str, speed_mode: int) -> str:
-    """Retune the feedrate the start code resets to."""
-    replacement = f"M220 S{speed_mode} ;Reset Feedrate (Looprint: {speed_mode}% speed)"
+def apply_speed_mode(text: str) -> str:
+    """Tag the feedrate reset the start code performs as Looprint's own."""
+    replacement = "M220 S100 ;Reset Feedrate (Looprint: 100% speed)"
     text = _M220_WITH_COMMENT_RE.sub(replacement, text)
     return _M220_BARE_RE.sub(replacement, text)
 

@@ -22,9 +22,23 @@ from pylooprint.core.template import centre_coordinates, resolve_max_layer_z, su
 from pylooprint.core.variables import extract_variable_values
 from pylooprint.pipeline import build_loops, detect_printer
 from pylooprint.printers import EndCodeContext, PrinterProfile, get_profile
+from pylooprint.printers.bedslinger import HOLD_END, HOLD_START
 from pylooprint.settings import LoopSettings
 
 from conftest import GOLDEN_TEMP
+
+
+def _without_release_hold(code: str) -> str:
+    """Drop the hold block, which the original tool knew nothing about.
+
+    ``result.gcode.3mf`` is a real output of the original web tool, so it is the
+    anchor for how faithful the port is - it is not re-generated.  The wait and
+    bed shake are this port's own addition on top; they are pinned separately in
+    ``test_release_hold.py``.
+    """
+    start = code.index(HOLD_START)
+    end = code.index(HOLD_END) + len(HOLD_END)
+    return code[:start].rstrip("\n") + "\n" + code[end:].lstrip("\n")
 
 
 def test_bedslinger_end_code_matches_a_real_looped_file(result_3mf):
@@ -44,18 +58,17 @@ def test_bedslinger_end_code_matches_a_real_looped_file(result_3mf):
     produced = substitute_first_layer_centre(profile.end_code(context), centre_x, centre_y)
     produced = resolve_max_layer_z(produced, 18.12)
 
-    assert produced == expected
+    assert _without_release_hold(produced) == expected
 
 
-def test_unsupported_printer_takes_the_fallback_and_warns(result_3mf):
+def test_unsupported_printer_takes_the_fallback_and_warns(golden_project):
     """A CoreXY profile has no in-place patches yet, so it uses Factorian's."""
-    project = ThreeMfProject.open(result_3mf)
+    project = ThreeMfProject.open(golden_project)
     result = build_loops(
         project,
         get_profile("p1"),
         LoopSettings(loops=1, cooldown_temp=18),
-        source_name=result_3mf.name,
-        force=True,
+        source_name=golden_project.name,
     )
     assert any("no in-place machine G-code" in w for w in result.warnings)
     assert "; --- PUSH LANE 1: CENTER" in result.gcode
