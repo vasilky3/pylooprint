@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Mapping, Sequence
 
 from ..core.patching import LineRangePatch, apply_patches, replace_between
-from ..core.placement import ExtrusionBounds
+from ..core.placement import extrusion_enters_zone, measure_extrusion_bounds
 from ..core.structure import GcodeStructure
 from ..core.template import apply_speed_mode
 from ..errors import UnsafeEjectZoneError
@@ -58,28 +58,37 @@ class A1MiniProfile(BedSlingerProfile):
     end_head_template_name = "end_a1_mini_head.gcode"
     end_tail_template_name = "end_a1_mini_tail.gcode"
 
-    def check_eject_clearance(self, bounds: ExtrusionBounds | None) -> None:
+    def check_eject_clearance(self, print_body: str) -> None:
         """Refuse the build if the model sits where the toolhead comes down.
 
         The push-off parks the nozzle off the plate at X-13 / Y180 and then
         drops to Z1.  The nozzle clears the plate, but the toolhead body
         overhangs the back-left corner, so a model printed there is hit on the
         way down - which damages both the print and the printer.
+
+        Only material actually laid down inside that corner counts.  Judging by
+        the plate's bounding box refuses perfectly good plates: one that reaches
+        the left edge at the front and the back edge in the middle has a box
+        covering a corner it never touches.
         """
-        if bounds is None:
+        if measure_extrusion_bounds(print_body) is None:
             raise UnsafeEjectZoneError(
                 "Model cannot be ejected. The safe head-descent zone could not be "
                 "verified - no extruding moves were found to measure. "
                 f"{_KEEPOUT_DESCRIPTION}; check the model is clear of it."
             )
 
-        if bounds.overlaps(
-            EJECT_KEEPOUT_MIN_X, EJECT_KEEPOUT_MAX_X, EJECT_KEEPOUT_MIN_Y, EJECT_KEEPOUT_MAX_Y
-        ):
+        hit = extrusion_enters_zone(
+            print_body,
+            EJECT_KEEPOUT_MIN_X,
+            EJECT_KEEPOUT_MAX_X,
+            EJECT_KEEPOUT_MIN_Y,
+            EJECT_KEEPOUT_MAX_Y,
+        )
+        if hit is not None:
             raise UnsafeEjectZoneError(
-                f"{_CANNOT_EJECT} {_KEEPOUT_DESCRIPTION}; the model occupies "
-                f"X {bounds.min_x:.2f}-{bounds.max_x:.2f}, "
-                f"Y {bounds.min_y:.2f}-{bounds.max_y:.2f} mm. "
+                f"{_CANNOT_EJECT} {_KEEPOUT_DESCRIPTION}; the model prints inside it, "
+                f"at X {hit[0]:.2f}, Y {hit[1]:.2f} mm. "
                 "Move the model clear of that corner and re-slice."
             )
 
@@ -143,6 +152,7 @@ class A1MiniProfile(BedSlingerProfile):
             load_template("end_a1_mini_inplace_head.gcode")
             .replace("@PARK_Z@", str(PARK_Z))
             .replace("@M190@", self.cooldown_block(context.settings.cooldown_temp))
+            .replace("@HOLD@", self.release_hold(context.settings))
         )
         push = self.push_gcode(align_feed=ALIGN_FEED_SLOW)
         sweep = self.wiggle_sweep()

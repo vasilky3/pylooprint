@@ -41,6 +41,8 @@ G1 X-48 Y262 F3600 ; move to safe limit position on the left
 
 M140 S0 ; turn off bed
 
+@HOLD@
+
 				
 ;======= Cool Down Done, Start Push Off =============
 ; calculate a good z-pushoff height, BE CAREFUL this could be a little different for parts

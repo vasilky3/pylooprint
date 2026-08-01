@@ -9,6 +9,8 @@ M400 ; wait all motion done
 @M190@
 
 M140 S0 ; turn off bed
+
+@HOLD@
 				
 ;======= Cool Down Done, Start Push Off =============
 ; calculate a good z-pushoff height, BE CAREFUL this could be a little different for parts

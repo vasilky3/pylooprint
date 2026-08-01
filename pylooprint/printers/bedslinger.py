@@ -10,6 +10,7 @@ directions would drive the gantry into the print.
 
 from __future__ import annotations
 
+from ..settings import LoopSettings
 from .base import EndCodeContext, PrinterProfile, load_template
 
 #: Fixed X feedrate of the wiggle sweep, as in Factorian's End_A1 templates.
@@ -20,6 +21,20 @@ WIGGLE_SPEED = 2000
 #: crawls instead, so the toolhead cannot knock a tall part over on the way.
 ALIGN_FEED_RAPID = 12000
 ALIGN_FEED_SLOW = 300
+
+# --- release shake ---------------------------------------------------------
+#: Peak-to-peak Y stroke of the shake, in mm.
+SHAKE_STROKE_MM = 2.0
+#: Frequency sweep, low to high, in Hz - the same idea as an input-shaping run.
+SHAKE_MIN_HZ = 15.0
+SHAKE_MAX_HZ = 60.0
+#: Steps in the sweep, and how many out-and-back cycles each step runs.
+SHAKE_STEPS = 16
+SHAKE_CYCLES = 8
+
+#: Markers bracketing the block, so it can be located in a finished file.
+HOLD_START = ";======= LOOPRINT RELEASE HOLD ======="
+HOLD_END = ";======= END LOOPRINT RELEASE HOLD ======="
 
 
 class BedSlingerProfile(PrinterProfile):
@@ -60,11 +75,51 @@ class BedSlingerProfile(PrinterProfile):
         lines.append(self.wiggle_final_line)
         return "".join(lines)
 
+    def release_hold(self, settings: LoopSettings) -> str:
+        """Wait at the park height, then shake the bed through a frequency sweep.
+
+        Runs between the cool-down wait and the push-off, and deliberately moves
+        neither Z nor X: the toolhead has to stay at the park height, because on
+        a printer with the limit-switch fan mod that is what keeps the fan
+        running for the whole hold.
+
+        The shake is unconditional; ``hold_seconds`` only controls the wait in
+        front of it.
+        """
+        lines = [
+            HOLD_START,
+            "; Hold at the park height while the part keeps cooling, then shake the",
+            "; bed loose.  Nothing here moves Z or X - the toolhead stays parked.",
+            "M400 ; wait for all motion to complete",
+        ]
+        if settings.hold_seconds > 0:
+            lines.append(f"G4 S{settings.hold_seconds} ; hold before the push-off")
+
+        stroke = _format_number(SHAKE_STROKE_MM)
+        lines += [
+            "",
+            f";------- bed shake: {_format_number(SHAKE_MIN_HZ)}"
+            f" -> {_format_number(SHAKE_MAX_HZ)} Hz sweep, {stroke} mm stroke -------",
+            "G91 ; relative moves, so the bed ends exactly where it started",
+        ]
+        for hertz in _sweep_frequencies():
+            # One cycle covers two strokes in 1/f seconds.
+            feed = round(120 * SHAKE_STROKE_MM * hertz)
+            lines.append(f"; --- {hertz:.1f} Hz ---")
+            lines += [f"G1 Y-{stroke} F{feed}\nG1 Y{stroke} F{feed}"] * SHAKE_CYCLES
+        lines += [
+            "G90 ; back to absolute positioning",
+            "M400",
+            HOLD_END,
+        ]
+        return "\n".join(lines)
+
     def end_code(self, context: EndCodeContext) -> str:
         temp = context.settings.cooldown_temp
         body = (
             load_template(self.end_head_template_name)
             .replace("@M190@", self.cooldown_block(temp))
+            .replace("@HOLD@", self.release_hold(context.settings))
             .replace("@PUSH@", self.push_gcode())
         )
         body += "\n" + self.wiggle_sweep()
@@ -78,6 +133,12 @@ class BedSlingerProfile(PrinterProfile):
     # End-code template file names, supplied by the concrete profiles.
     end_head_template_name: str
     end_tail_template_name: str
+
+
+def _sweep_frequencies() -> list[float]:
+    """``SHAKE_STEPS`` frequencies spread evenly across the sweep range."""
+    span = SHAKE_MAX_HZ - SHAKE_MIN_HZ
+    return [SHAKE_MIN_HZ + span * step / (SHAKE_STEPS - 1) for step in range(SHAKE_STEPS)]
 
 
 def _format_number(value: float) -> str:

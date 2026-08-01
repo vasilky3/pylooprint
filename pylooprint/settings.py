@@ -21,6 +21,12 @@ MAX_TEMP = 90
 DEFAULT_TEMP = 23
 COOLDOWN_WARNING_THRESHOLD = 35
 
+#: How long to sit at the park height once the bed has reached its target, before
+#: the release shake and the push-off.  Zero skips the wait; the shake always runs.
+MIN_HOLD_SECONDS = 0
+MAX_HOLD_SECONDS = 3600
+DEFAULT_HOLD_SECONDS = 300
+
 
 @dataclass(frozen=True)
 class LoopSettings:
@@ -28,3 +34,4 @@ class LoopSettings:
 
     loops: int = DEFAULT_LOOPS
     cooldown_temp: int = DEFAULT_TEMP
+    hold_seconds: int = DEFAULT_HOLD_SECONDS

@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from importlib import resources
 from typing import Mapping
 
-from ..core.placement import ExtrusionBounds
 from ..core.structure import GcodeStructure
 from ..core.template import render_start_code
 from ..settings import LoopSettings
@@ -98,7 +97,7 @@ class PrinterProfile(ABC):
         """Notes the end-code generator produced - e.g. auto-adjusted push lanes."""
         return ()
 
-    def check_eject_clearance(self, bounds: ExtrusionBounds | None) -> None:
+    def check_eject_clearance(self, print_body: str) -> None:
         """Refuse the build if the model fouls this printer's eject sequence.
 
         The default accepts anything, because pushing a part off with the

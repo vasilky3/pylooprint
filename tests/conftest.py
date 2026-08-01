@@ -1,7 +1,13 @@
 """Shared fixtures.
 
-The sample files live in the sibling ``Gcode`` folder that ships with this
-repository; tests that need them are skipped when it is not present.
+Sample plates come from two places:
+
+* ``tests/test gcode/`` - sliced plates that ship with the repository, used by
+  the eject keep-out tests; and
+* the sibling ``Gcode`` folder - the larger reference files the in-place and
+  Factorian golden tests compare against.
+
+Tests that need a file missing from either are skipped rather than failed.
 """
 
 from __future__ import annotations
@@ -34,12 +40,16 @@ GOLDEN_TEMP = 58
 INPLACE_REFERENCE = SAMPLES / "test 2 blocks mymod" / "Metadata" / "plate_1.gcode"
 INPLACE_TEMP = 28
 
-#: Two A1 Mini cubes that bracket the eject keep-out zone.  The projects in
-#: ORCA_DIR are unsliced, so these globs only match once they have been sliced
-#: and exported as .gcode.3mf; the tests using them skip until then.
-ORCA_DIR = ROOT.parent / "orcaProj"
-FULLFIELD_GLOB = "A1mini_cube180_fullfield*.gcode.3mf"
-SUITABLE_GLOB = "A1mini_cube160h180_sutable*.gcode.3mf"
+#: Sliced A1 Mini plates that pin the eject keep-out rule.  The unsliced
+#: projects they came from live in ``../orcaProj``.
+PLATES = ROOT / "tests" / "test gcode"
+#: 180 mm cube covering the whole plate - prints in the corner, must be refused.
+FULLFIELD = PLATES / "A1mini_cube180_fullfield.gcode.3mf"
+#: 160 mm cube shifted right - reaches past Y150 but stays clear of X15.
+SUITABLE = PLATES / "A1mini_cube160h180_sutable.gcode.3mf"
+#: The plate the bounding-box check used to refuse: it reaches X14 at the front
+#: and Y169 in the middle, so its box covers the corner while no material does.
+TRPASLIK = PLATES / "trpaslik+3mf.gcode.3mf"
 
 
 def _require(path: Path) -> Path:
@@ -74,24 +84,19 @@ def inplace_reference() -> str:
     return _require(INPLACE_REFERENCE).read_text(encoding="utf-8")
 
 
-def _require_sliced(pattern: str) -> Path:
-    """First sliced export matching ``pattern``, or skip."""
-    matches = sorted(ORCA_DIR.glob(pattern))
-    if not matches:
-        pytest.skip(
-            f"no sliced export matching {pattern} in {ORCA_DIR}; "
-            "open the .3mf project in Bambu Studio, slice it and export as .gcode.3mf"
-        )
-    return matches[0]
-
-
 @pytest.fixture(scope="session")
 def fullfield_project() -> Path:
     """180 mm cube covering the whole plate - must be refused."""
-    return _require_sliced(FULLFIELD_GLOB)
+    return _require(FULLFIELD)
 
 
 @pytest.fixture(scope="session")
 def suitable_project() -> Path:
     """160 mm cube shifted clear of the keep-out corner - must be accepted."""
-    return _require_sliced(SUITABLE_GLOB)
+    return _require(SUITABLE)
+
+
+@pytest.fixture(scope="session")
+def trpaslik_project() -> Path:
+    """Wide plate that spans the keep-out corner without entering it."""
+    return _require(TRPASLIK)
