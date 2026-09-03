@@ -102,14 +102,40 @@ def test_pla_block_is_dropped_for_other_filaments():
     assert "M106 P3 S180" not in rendered
 
 
-def test_z_drop_conditional_picks_the_branch_for_the_model_height():
-    template = "{if (max_layer_z ) > 41}\n    G1 Z{max_layer_z - 40} F600\n{else}\n    G1 Z1 F600\n{endif}"
+#: The push-off Z-drop, as ``a1_push.gcode`` spells it once the A1 Mini's push
+#: constants are substituted in.
+_Z_DROP = "{if (max_layer_z ) >= 6}\n    G1 Z{max_layer_z * 0.7} F600\n{else}\n    G1 Z0.2 F600\n{endif}"
+
+
+def test_z_drop_aims_at_seventy_percent_of_the_model_height():
+    """The nozzle lands high on the side wall, where the push tips the part over."""
+    assert "G1 Z12.68 F600" in resolve_max_layer_z(_Z_DROP, 18.12)
+    assert "G1 Z42.00 F600" in resolve_max_layer_z(_Z_DROP, 60.0)
+    assert "G1 Z140.00 F600" in resolve_max_layer_z(_Z_DROP, 200.0)
+
+
+def test_z_drop_keeps_the_nozzle_off_the_plate_below_six_millimetres():
+    """Under 6 mm there is no useful height to aim at, so the nozzle drops to Z0.2."""
+    assert "G1 Z0.2 F600" in resolve_max_layer_z(_Z_DROP, 5.9)
+    # 6 mm itself takes the 70% branch: the conditional is `>=`.
+    assert "G1 Z4.20 F600" in resolve_max_layer_z(_Z_DROP, 6.0)
+
+
+def test_corexy_keeps_the_fixed_offset_rule():
+    """P1 and X1 still raise the bed to 30 mm under the top, or Z1 when short.
+
+    Their toolhead carries the part cooling fans and the LIDAR, so it needs the
+    clearance above the model that a push at 70% of its height would give away.
+    """
+    template = "{if (max_layer_z ) > 31}\n    G1 Z{max_layer_z - 30} F600\n{else}\n    G1 Z1 F600\n{endif}"
     assert "G1 Z1 F600" in resolve_max_layer_z(template, 18.12)
-    assert "G1 Z20.00 F600" in resolve_max_layer_z(template, 60.0)
+    assert "G1 Z30.00 F600" in resolve_max_layer_z(template, 60.0)
 
 
 def test_max_layer_z_arithmetic_uses_two_decimals():
     assert resolve_max_layer_z("G1 Z{max_layer_z + 0.5}", 18.12) == "G1 Z18.62"
+    assert resolve_max_layer_z("G1 Z{max_layer_z - 40}", 60.0) == "G1 Z20.00"
+    assert resolve_max_layer_z("G1 Z{max_layer_z * 0.75}", 18.12) == "G1 Z13.59"
 
 
 def test_placement_finds_a_centred_model():

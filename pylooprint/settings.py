@@ -22,7 +22,7 @@ DEFAULT_TEMP = 23
 COOLDOWN_WARNING_THRESHOLD = 35
 
 #: How long to sit at the park height once the bed has reached its target, before
-#: the release shake and the push-off.  Zero skips the wait; the shake always runs.
+#: the beep and the push-off.  Zero skips the wait; the beep always sounds.
 MIN_HOLD_SECONDS = 0
 MAX_HOLD_SECONDS = 3600
 DEFAULT_HOLD_SECONDS = 300

@@ -19,6 +19,10 @@ from ..settings import LoopSettings
 
 _TEMPLATE_PACKAGE = "pylooprint.printers.templates"
 
+#: Markers bracketing the pre-push beep, so it can be located in a finished file.
+BEEP_START = ";======= LOOPRINT RELEASE BEEP ======="
+BEEP_END = ";======= END LOOPRINT RELEASE BEEP ======="
+
 
 @dataclass(frozen=True)
 class BedBounds:
@@ -88,6 +92,28 @@ class PrinterProfile(ABC):
     def start_code(self) -> str:
         """Raw start-code template, before variable substitution."""
         return load_template(self.start_template_name)
+
+    def release_beep(self) -> str:
+        """One short tone, emitted immediately before the push-off.
+
+        Every profile uses it: the machine has been standing still through the
+        cool-down, so the beep is the only warning that it is about to move
+        again and throw the part off the plate.
+
+        ``M1006`` is the same tone macro the slicer's own finish sound uses -
+        one note instead of a tune.  A firmware that does not know it ignores
+        the block, which costs nothing but the sound.
+        """
+        return "\n".join(
+            [
+                BEEP_START,
+                "M400 ; wait for all motion to complete",
+                "M1006 S1",
+                "M1006 A0 B20 L100 C44 D20 M100 E44 F20 N100",
+                "M1006 W",
+                BEEP_END,
+            ]
+        )
 
     @abstractmethod
     def end_code(self, context: EndCodeContext) -> str:

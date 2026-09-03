@@ -22,30 +22,16 @@ from pylooprint.core.template import centre_coordinates, resolve_max_layer_z, su
 from pylooprint.core.variables import extract_variable_values
 from pylooprint.pipeline import build_loops, detect_printer
 from pylooprint.printers import EndCodeContext, PrinterProfile, get_profile
-from pylooprint.printers.bedslinger import HOLD_END, HOLD_START
 from pylooprint.settings import LoopSettings
 
-from conftest import GOLDEN_TEMP
-
-
-def _without_release_hold(code: str) -> str:
-    """Drop the hold block, which the original tool knew nothing about.
-
-    ``result.gcode.3mf`` is a real output of the original web tool, so it is the
-    anchor for how faithful the port is - it is not re-generated.  The wait and
-    bed shake are this port's own addition on top; they are pinned separately in
-    ``test_release_hold.py``.
-    """
-    start = code.index(HOLD_START)
-    end = code.index(HOLD_END) + len(HOLD_END)
-    return code[:start].rstrip("\n") + "\n" + code[end:].lstrip("\n")
+from conftest import GOLDEN_TEMP, with_current_push_block, without_release_hold
 
 
 def test_bedslinger_end_code_matches_a_real_looped_file(result_3mf):
     """``result.gcode.3mf`` embeds a Looprint A1 Mini end code for 58 degrees."""
     gcode = zipfile.ZipFile(result_3mf).read("Metadata/plate_1.gcode").decode("utf-8")
     expected = gcode[gcode.index(";===== A1 Mini PRESET") : gcode.index("; >>> END OF PRINT LOOPS <<<")]
-    expected = expected.rstrip("\n")
+    expected = with_current_push_block(expected).rstrip("\n")
 
     profile = get_profile("a1mini")
     structure = split_gcode(gcode)
@@ -58,7 +44,7 @@ def test_bedslinger_end_code_matches_a_real_looped_file(result_3mf):
     produced = substitute_first_layer_centre(profile.end_code(context), centre_x, centre_y)
     produced = resolve_max_layer_z(produced, 18.12)
 
-    assert _without_release_hold(produced) == expected
+    assert without_release_hold(produced) == expected
 
 
 def test_unsupported_printer_takes_the_fallback_and_warns(golden_project):

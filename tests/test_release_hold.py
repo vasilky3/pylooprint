@@ -1,33 +1,25 @@
-"""The wait and bed shake that run between the cool-down and the push-off.
+"""The wait and the beep that run between the cool-down and the push-off.
 
 Two things have to hold no matter what:
 
-* nothing in the block moves Z, because the toolhead has to stay at the park
-  height - that is what keeps the limit-switch fan mod running; and
-* the bed ends the shake exactly where it started, because the eject keep-out
-  zone is measured for the bed's parked position.
+* nothing in the hold block moves the machine, because the toolhead has to stay
+  at the park height - that is what keeps the limit-switch fan mod running -
+  and the bed has to stay where the eject keep-out zone was measured for; and
+* every printer sounds the beep before it pushes, since that is the only
+  warning that the machine is about to move again.
 """
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from pylooprint.printers import EndCodeContext, get_profile
-from pylooprint.printers.bedslinger import (
-    SHAKE_CYCLES,
-    SHAKE_MAX_HZ,
-    SHAKE_MIN_HZ,
-    SHAKE_STEPS,
-    SHAKE_STROKE_MM,
-)
+from pylooprint.printers.base import BEEP_END, BEEP_START
+from pylooprint.printers.p1 import _PUSH_OFF_HEADING
 from pylooprint.settings import DEFAULT_HOLD_SECONDS, LoopSettings
 
 HOLD_START = ";======= LOOPRINT RELEASE HOLD ======="
 HOLD_END = ";======= END LOOPRINT RELEASE HOLD ======="
-
-_SHAKE_MOVE_RE = re.compile(r"^G1 Y(-?[\d.]+) F(\d+)$", re.MULTILINE)
 
 A1_MINI = get_profile("a1mini")
 
@@ -41,11 +33,23 @@ def _block(code: str) -> str:
     return code[code.index(HOLD_START) : code.index(HOLD_END) + len(HOLD_END)]
 
 
+def _push_index(code: str) -> int:
+    """Where the eject sequence starts, whichever template the profile assembled.
+
+    On the CoreXY machines that is the bed drop under its own heading; on the
+    bed slingers it is the push block the head template hands over to.
+    """
+    for marker in (_PUSH_OFF_HEADING, "@PUSH@", "Start Push Off"):
+        if marker in code:
+            return code.index(marker)
+    raise AssertionError("no push-off found in the end code")
+
+
 @pytest.mark.parametrize("key", ["a1", "a1mini"])
 def test_the_block_sits_between_the_cool_down_and_the_push_off(key):
     code = _end_code(key)
     assert code.rindex("M190") < code.index(HOLD_START)
-    assert code.index(HOLD_END) < code.index("@PUSH@" if "@PUSH@" in code else "Start Push Off")
+    assert code.index(HOLD_END) < _push_index(code)
 
 
 def test_the_default_wait_is_five_minutes():
@@ -53,41 +57,32 @@ def test_the_default_wait_is_five_minutes():
     assert f"G4 S{DEFAULT_HOLD_SECONDS} ; hold before the push-off" in _end_code()
 
 
-def test_the_shake_runs_even_without_a_wait():
-    """``--hold 0`` drops the wait only; the shake is not optional."""
+def test_the_beep_sounds_even_without_a_wait():
+    """``--hold 0`` drops the wait only; the beep is not optional."""
     code = _end_code(hold_seconds=0)
     assert "G4 S" not in _block(code)
-    assert HOLD_START in code
-    assert len(_SHAKE_MOVE_RE.findall(_block(code))) == 2 * SHAKE_STEPS * SHAKE_CYCLES
+    assert BEEP_START in _block(code)
 
 
-def test_the_sweep_climbs_from_the_low_frequency_to_the_high_one():
-    moves = _SHAKE_MOVE_RE.findall(_block(_end_code()))
-    assert len(moves) == 2 * SHAKE_STEPS * SHAKE_CYCLES
-
-    feeds = [int(feed) for _, feed in moves]
-    assert feeds == sorted(feeds)
-    # One cycle covers two strokes in 1/f seconds.
-    assert feeds[0] == round(120 * SHAKE_STROKE_MM * SHAKE_MIN_HZ)
-    assert feeds[-1] == round(120 * SHAKE_STROKE_MM * SHAKE_MAX_HZ)
-    assert len(set(feeds)) == SHAKE_STEPS
+@pytest.mark.parametrize("key", ["a1", "a1mini", "p1", "x1"])
+def test_every_printer_beeps_before_the_push(key):
+    code = _end_code(key)
+    assert code.count(BEEP_START) == 1
+    assert code.count("M1006 W") >= 1
+    assert code.index(BEEP_START) < code.index(BEEP_END) < _push_index(code)
 
 
-def test_the_bed_returns_to_where_it_started():
-    """Relative moves that sum to zero - the keep-out zone assumes the park Y."""
-    block = _block(_end_code())
-    assert "G91" in block and "G90" in block
-    assert block.index("G91") < block.index("G90")
-    assert sum(float(offset) for offset, _ in _SHAKE_MOVE_RE.findall(block)) == 0.0
+def test_nothing_in_the_block_moves_the_machine():
+    """The toolhead must stay parked: on the A1 Mini that is the fan switch.
 
-
-def test_nothing_in_the_block_moves_z_or_x():
-    """The toolhead must stay parked: on the A1 Mini that is the fan switch."""
+    The bed must stay put too - the eject keep-out zone assumes the park Y.
+    """
     commands = [line for line in _block(_end_code()).split("\n") if line and not line.startswith(";")]
     assert commands, "the block emitted nothing but comments"
     for command in commands:
-        assert "Z" not in command.split(";")[0]
-        assert "X" not in command.split(";")[0]
+        # G4 (dwell) is the only G-code left in the block; everything else is
+        # an M-code that talks to the firmware without moving an axis.
+        assert not command.startswith("G") or command.startswith("G4 ")
 
 
 def test_the_hold_is_still_at_the_park_height_in_the_inplace_end_code(golden_project):
@@ -104,6 +99,6 @@ def test_the_hold_is_still_at_the_park_height_in_the_inplace_end_code(golden_pro
 
 
 @pytest.mark.parametrize("key", ["p1", "x1"])
-def test_corexy_printers_never_get_the_block(key):
-    """The CoreXY bed only moves in Z - there is nothing to shake."""
+def test_corexy_printers_never_get_the_hold(key):
+    """The CoreXY bed cannot hold the toolhead at a park height; only the beep runs."""
     assert HOLD_START not in _end_code(key)

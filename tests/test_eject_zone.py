@@ -1,7 +1,8 @@
 """A1 Mini: refuse to build when the model blocks the head-descent zone.
 
 The push-off parks the nozzle off the plate at X-13 / Y180 and then drops the
-toolhead to Z1.  The nozzle clears the plate, but the toolhead body overhangs
+toolhead to the push height - as low as Z0.2 for a part under 6 mm.  The nozzle
+clears the plate, but the toolhead body overhangs
 the back-left corner, so a model printed in ``X 0-15, Y 150-180`` is struck on
 the way down.
 

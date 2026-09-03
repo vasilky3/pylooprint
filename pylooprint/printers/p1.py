@@ -7,11 +7,13 @@ import re
 from .base import BedBounds, EndCodeContext, load_template
 from .corexy import PUSH_LANE_OFFSET, CoreXyProfile
 
-#: Where the stock Factorian push block starts and ends in the raw template.
+#: Where the stock push block starts and ends in the raw template.
 _PUSH_BLOCK_START = "G1 X170 Y254 F600\t\t; move nozzle a little to the side for safety"
 _SAFETY_CLEAR_START = ";====Push off complete, start safety clear ===="
 _SAFETY_CLEAR_END = ";==== safety clear complete ===="
 _MOTOR_DISABLE = "M17 X0.8 Y0.8 Z0.5 ; lower motor current to 45% power"
+#: Heading the template puts in front of the bed drop that starts the eject.
+_PUSH_OFF_HEADING = ";=== Cool Down Done, Start Push Off ==="
 _TARGET_TEMP_RE = re.compile(r"(here the target temp is )[^)]*( °C)")
 
 
@@ -32,6 +34,7 @@ class P1Profile(CoreXyProfile):
         code = code.replace("M190 S18", f"M190 S{temp}")
         code = _TARGET_TEMP_RE.sub(f"here the target temp is {temp + 5} °C", code, count=1)
         code = self._splice_push_block(code, self.push_gcode(lanes))
+        code = self._insert_beep(code)
         code = self._insert_end_sound(code)
         header = (
             f";===== {context.direction.upper()} PRESET (Offset: {PUSH_LANE_OFFSET}mm, "
@@ -52,6 +55,13 @@ class P1Profile(CoreXyProfile):
         else:
             tail = code[safety_start + len(_SAFETY_CLEAR_START) :]
         return code[:start] + push + tail
+
+    def _insert_beep(self, code: str) -> str:
+        """Sound the push-off warning before the bed starts dropping."""
+        index = code.find(_PUSH_OFF_HEADING)
+        if index == -1:
+            return code
+        return code[:index] + self.release_beep() + "\n" + code[index:]
 
     def _insert_end_sound(self, code: str) -> str:
         sound = load_template("sound_p1.gcode")

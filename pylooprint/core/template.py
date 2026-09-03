@@ -3,7 +3,7 @@
 Bambu/Orca start and end G-code templates use three notations:
 
 * ``[name]``            - plain substitution
-* ``{expression}``      - arithmetic, e.g. ``{max_layer_z - 40}``
+* ``{expression}``      - arithmetic, e.g. ``{max_layer_z - 40}``, ``{max_layer_z * 0.75}``
 * ``{if cond}...{endif}`` - conditional blocks
 
 Only the handful of forms that actually occur in the shipped templates are
@@ -41,11 +41,11 @@ _M220_BARE_RE = re.compile(r"M220\s+S100\s*$", re.MULTILINE)
 
 # --- max_layer_z -----------------------------------------------------------
 _MAX_Z_IF_RE = re.compile(
-    r"\{if\s*\(?\s*max_layer_z\s*\)?\s*>\s*([\d.]+)\}(.*?)\{else\}(.*?)\{endif\}",
+    r"\{if\s*\(?\s*max_layer_z\s*\)?\s*>\s*(=?)\s*([\d.]+)\}(.*?)\{else\}(.*?)\{endif\}",
     re.DOTALL,
 )
 _MAX_Z_PLAIN_RE = re.compile(r"\{max_layer_z\}")
-_MAX_Z_MATH_RE = re.compile(r"\{max_layer_z\s*([+\-])\s*([\d.]+)\}")
+_MAX_Z_MATH_RE = re.compile(r"\{max_layer_z\s*([+\-*])\s*([\d.]+)\}")
 
 VOLUMETRIC_DIVISOR = 2.4053
 VOLUMETRIC_FALLBACK = "1200"
@@ -218,13 +218,14 @@ def resolve_max_layer_z(text: str, max_layer_z: float, *, from_header: bool = Tr
 
 def _pick_z_branch(match: re.Match[str], max_layer_z: float, *, trim_if: bool) -> str:
     try:
-        threshold = float(match.group(1))
+        threshold = float(match.group(2))
     except ValueError:  # pragma: no cover - guarded by the regex
         return match.group(0)
-    if max_layer_z > threshold:
-        branch = _substitute_max_layer_z(match.group(2), max_layer_z)
+    taken = max_layer_z >= threshold if match.group(1) == "=" else max_layer_z > threshold
+    if taken:
+        branch = _substitute_max_layer_z(match.group(3), max_layer_z)
         return branch.strip() if trim_if else branch
-    return _substitute_max_layer_z(match.group(3), max_layer_z)
+    return _substitute_max_layer_z(match.group(4), max_layer_z)
 
 
 def _substitute_max_layer_z(text: str, max_layer_z: float) -> str:
@@ -232,7 +233,13 @@ def _substitute_max_layer_z(text: str, max_layer_z: float) -> str:
 
     def arithmetic(match: re.Match[str]) -> str:
         value = float(match.group(2))
-        total = max_layer_z + value if match.group(1) == "+" else max_layer_z - value
+        operator = match.group(1)
+        if operator == "+":
+            total = max_layer_z + value
+        elif operator == "-":
+            total = max_layer_z - value
+        else:
+            total = max_layer_z * value
         return to_fixed(total, 2)
 
     return _MAX_Z_MATH_RE.sub(arithmetic, text)

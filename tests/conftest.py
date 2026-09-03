@@ -100,3 +100,88 @@ def suitable_project() -> Path:
 def trpaslik_project() -> Path:
     """Wide plate that spans the keep-out corner without entering it."""
     return _require(TRPASLIK)
+
+
+def without_release_hold(code: str) -> str:
+    """Drop the hold block, so a comparison cannot depend on its contents.
+
+    ``result.gcode.3mf`` is a real output of the original web tool and the
+    in-place reference is hand-made, so neither knows about the wait and the
+    push-off beep this port adds between the cool-down and the push.  Those are
+    pinned separately in ``test_release_hold.py``.
+    """
+    from pylooprint.printers.bedslinger import HOLD_END, HOLD_START
+
+    if HOLD_START not in code:
+        return code
+    start = code.index(HOLD_START)
+    end = code.index(HOLD_END) + len(HOLD_END)
+    return code[:start].rstrip("\n") + "\n" + code[end:].lstrip("\n")
+
+
+# --- the deliberate divergences from the reference files --------------------
+# Both references were made when the push-off aimed a fixed 40 mm below the top
+# of the model, which came out as Z1 for anything shorter than 41 mm.  Both
+# models are 18.12 mm tall, so both show that Z1.  Looprint now pushes at 70% of
+# the model height, and the comments around the push were rewritten with it, so
+# these blocks differ while everything around them still has to match byte for
+# byte.
+#
+# Every string is written out by hand.  Rendering the current template here
+# instead would compare the template against itself and pin nothing.
+_OLD_Z_DROP = (
+    ";===== Z-Drop Logic (41mm Rule) =====\n"
+    "; Factorian's exact conditional from End_A1.txt lines 175-179: "
+    "IF (max_layer_z ) > 41 THEN Z = max_layer_z - 40 ELSE Z = 1.0\n"
+    "; Note: Factorian uses conditional logic with space after max_layer_z - "
+    "our regex handles this format\n"
+    "\n"
+    "    G1 Z1 F600\n"
+    "\n"
+    "\n"
+)
+_NEW_Z_DROP = (
+    ";===== Z-Drop Logic =====\n"
+    "; Push at 0.7 of the model height: high enough on the side wall to tip the part\n"
+    "; over, and still below its top edge.\n"
+    "; Under 6 mm there is no useful height left to aim at, so the nozzle\n"
+    "; comes down to Z0.2 and shoves the part along the plate instead.\n"
+    "G1 Z12.68 F600\n"
+    "\n"
+)
+
+#: Each ``(old, new)`` pair is one region of the push block that a reference file
+#: still carries in its previous wording.  ``18.12 * 0.7`` is ``12.68``, so a
+#: reference that pushed at Z1 now pushes at Z12.68.
+_PUSH_BLOCK_UPDATES = (
+    (
+        "; (This alignment move is not in End_A1.txt but is critical for push accuracy)\n",
+        "",
+    ),
+    (_OLD_Z_DROP, _NEW_Z_DROP),
+    (
+        "; Factorian Speed: F300 (very slow to prevent tipping on moving bed) - "
+        "End_A1.txt line 182, End_A1_Mini.txt line 186\n",
+        "; F300 is deliberately slow: the bed is moving under the part, and a quick "
+        "shove tips it over instead of sliding it off.\n",
+    ),
+    (
+        "; Note: Factorian's End_A1.txt line 182 has no M400 after push, "
+        "but we add it for safety\n",
+        "",
+    ),
+)
+
+
+def with_current_push_block(expected: str) -> str:
+    """Bring a reference file's push block up to the current template.
+
+    Raises rather than returning the text unchanged, so that a reference file
+    that stops carrying one of the old regions is noticed instead of silently
+    turning this into a no-op.
+    """
+    for old, new in _PUSH_BLOCK_UPDATES:
+        if old not in expected:
+            raise AssertionError(f"reference file no longer carries: {old.splitlines()[0]}")
+        expected = expected.replace(old, new)
+    return expected

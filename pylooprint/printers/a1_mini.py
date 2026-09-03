@@ -22,12 +22,24 @@ _END_SPLICE_BEFORE = "M220 S100  ; Reset feedrate magnitude"
 #: 180 mm printable height: the gantry is driven up against the mechanical
 #: switch at the top, which gives a repeatable reference to cool down from.
 #: Do not "correct" this to 180.
-PARK_Z = 184.5
+PARK_Z = 184
+
+#: Fraction of the model height the nozzle drops to before the push: high enough
+#: on the side wall to tip the part over, still below its top edge.
+PUSH_HEIGHT_FACTOR = 0.7
+
+#: Model height, in mm, below which there is no useful side wall left to aim at.
+PUSH_MIN_MODEL_HEIGHT = 6.0
+
+#: Z used for a model shorter than PUSH_MIN_MODEL_HEIGHT: the nozzle comes all
+#: the way down and shoves the part along the plate instead of tipping it over.
+PUSH_MIN_Z = 0.2
 
 #: Plate area the toolhead body covers while it parks at X-13 / Y180 and then
-#: descends to Z1 for the push-off.  The nozzle itself clears the plate at
-#: X-13, but the body overhangs the back-left corner by 15 mm in X and 30 mm in
-#: Y, so anything printed inside this rectangle is struck on the way down.
+#: descends to the push height - PUSH_HEIGHT_FACTOR of the model height, or
+#: PUSH_MIN_Z for a short part.  The nozzle itself clears the plate at X-13, but
+#: the body overhangs the back-left corner by 15 mm in X and 30 mm in Y, so
+#: anything printed inside this rectangle is struck on the way down.
 EJECT_KEEPOUT_MIN_X = 0.0
 EJECT_KEEPOUT_MAX_X = 15.0
 EJECT_KEEPOUT_MIN_Y = 150.0
@@ -48,6 +60,10 @@ class A1MiniProfile(BedSlingerProfile):
     bed_bounds = BedBounds(min_x=-13, max_x=180, min_y=0, max_y=185)
     m190_repeat = 50
 
+    push_height_factor = PUSH_HEIGHT_FACTOR
+    push_min_model_height = PUSH_MIN_MODEL_HEIGHT
+    push_min_z = PUSH_MIN_Z
+
     y_forward = 180
     wiggle_x_left = -13
     wiggle_x_right = 180
@@ -62,9 +78,13 @@ class A1MiniProfile(BedSlingerProfile):
         """Refuse the build if the model sits where the toolhead comes down.
 
         The push-off parks the nozzle off the plate at X-13 / Y180 and then
-        drops to Z1.  The nozzle clears the plate, but the toolhead body
-        overhangs the back-left corner, so a model printed there is hit on the
-        way down - which damages both the print and the printer.
+        drops to the push height.  The nozzle clears the plate, but the toolhead
+        body overhangs the back-left corner, so a model printed there is hit on
+        the way down - which damages both the print and the printer.
+
+        The check is unconditional even though the push height follows the
+        model: the shortest parts still come all the way down to ``PUSH_MIN_Z``,
+        so there is no height at which the corner becomes safe.
 
         Only material actually laid down inside that corner counts.  Judging by
         the plate's bounding box refuses perfectly good plates: one that reaches

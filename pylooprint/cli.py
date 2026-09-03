@@ -11,7 +11,6 @@ from .core.project import ThreeMfProject
 from .errors import LooprintError
 from .pipeline import BuildResult, build_loops, detect_printer
 from .printers import available_profiles, get_profile
-from .printers.bedslinger import SHAKE_MAX_HZ, SHAKE_MIN_HZ
 from .settings import (
     COOLDOWN_WARNING_THRESHOLD,
     DEFAULT_HOLD_SECONDS,
@@ -61,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="SECONDS",
         help=(
             "A1/A1 Mini: seconds to hold at the park height after the cool-down, before "
-            f"the bed shake (default: {DEFAULT_HOLD_SECONDS}; 0 skips the wait, the shake always runs)"
+            f"the push-off beep (default: {DEFAULT_HOLD_SECONDS}; 0 skips the wait, the beep always sounds)"
         ),
     )
     parser.add_argument("--dry-run", action="store_true", help="report what would be built without writing a file")
@@ -126,8 +125,7 @@ def _report(args: argparse.Namespace, result: BuildResult, destination: Path) ->
     if result.placement:
         print(f"placement   : {result.placement.direction} (X {result.placement.min_x:.1f}..{result.placement.max_x:.1f})")
     print(f"cool-down   : {args.temp} C -> commanded {result.profile.apply_temp_offset(args.temp)} C")
-    shake = f"{SHAKE_MIN_HZ:.0f}-{SHAKE_MAX_HZ:.0f} Hz bed shake"
-    wait = f"{args.hold} s, then a {shake}" if args.hold else f"no wait, {shake} only"
+    wait = f"{args.hold} s, then the push-off beep" if args.hold else "no wait, push-off beep only"
     print(f"hold        : {wait}")
     print(f"output size : {len(result.gcode) / 1024 / 1024:.1f} MB of G-code")
 
