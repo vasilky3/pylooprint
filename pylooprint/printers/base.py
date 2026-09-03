@@ -11,8 +11,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from importlib import resources
-from typing import Mapping
+from typing import Mapping, Sequence
 
+from ..core.parts import PartBounds
+from ..core.push_plan import PushLine
 from ..core.structure import GcodeStructure
 from ..core.template import render_start_code
 from ..settings import LoopSettings
@@ -57,6 +59,9 @@ class EndCodeContext:
     #: Model bounding box, when placement detection produced one.
     model_min_x: float | None = None
     model_max_x: float | None = None
+    #: The separate parts on the plate, in report order.  Empty when the body
+    #: could not be measured, which sends the push-off back to its one-line form.
+    parts: tuple[PartBounds, ...] = ()
     #: Side of the bed the model sits on: ``left`` / ``center`` / ``right``.
     direction: str = "center"
 
@@ -80,6 +85,11 @@ class PrinterProfile(ABC):
     m190_repeat: int = 1
     #: Start-code template shipped for this machine.
     start_template_name: str
+    #: The blade that pushes a part off: how wide the toolhead sweeps, in mm,
+    #: and how much of that width has to sit over a part to carry it.  Their
+    #: product is how far from a line a part may stand and still be pushed.
+    blade_width: float
+    blade_overlap: float
 
     def apply_temp_offset(self, temp: int) -> int:
         """Bed temperature to actually command for a requested cool-down temp."""
@@ -122,6 +132,16 @@ class PrinterProfile(ABC):
     def end_code_warnings(self, context: EndCodeContext) -> tuple[str, ...]:
         """Notes the end-code generator produced - e.g. auto-adjusted push lanes."""
         return ()
+
+    def push_plan(self, parts: Sequence[PartBounds]) -> list[PushLine]:
+        """The lines the blade runs to sweep this plate, left to right.
+
+        Empty for a profile whose push-off does not follow the parts - the
+        CoreXY machines still push through the plate centre in three fixed
+        lanes.  The report and the G-code both read this, so neither can end up
+        describing a push the other does not make.
+        """
+        return []
 
     def check_eject_clearance(self, print_body: str) -> None:
         """Refuse the build if the model fouls this printer's eject sequence.

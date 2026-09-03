@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pylooprint.core.config_block import config_value, parse_config_block
 from pylooprint.core.jsnum import number_to_string, to_fixed
-from pylooprint.core.placement import determine_model_placement
+from pylooprint.core.placement import determine_model_placement, iter_extrusion_segments
 from pylooprint.core.structure import extract_original_tool_command, split_gcode
 from pylooprint.core.template import render_start_code, resolve_max_layer_z
 from pylooprint.core.variables import extract_variable_values
@@ -153,6 +155,44 @@ def test_placement_ignores_purge_and_wipe_moves():
     lines += ["G1 X20 Y10 Z0.2 E0.5"] * 50  # purge line at the edge
     placement = determine_model_placement("\n".join(lines), -13, 180, 0, 185)
     assert (placement.min_x, placement.max_x) == (110, 129)
+
+
+def _extent(body: str) -> tuple[tuple[float, float], tuple[float, float]]:
+    """X and Y range covered by the extruding moves of a body."""
+    points = [(x, y) for x0, y0, x1, y1, *_ in iter_extrusion_segments(body) for x, y in ((x0, y0), (x1, y1))]
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    return (min(xs), max(xs)), (min(ys), max(ys))
+
+
+def test_an_arc_is_walked_around_its_bulge_not_across_its_chord():
+    """``G3`` counter-clockwise from the left of the circle passes underneath."""
+    x_range, y_range = _extent("G1 X0 Y0 Z0.2\nG3 X10 Y0 I5 J0 E1")
+    assert x_range == pytest.approx((0.0, 10.0))
+    assert y_range == pytest.approx((-5.0, 0.0))
+
+
+def test_an_arc_the_other_way_round_bulges_the_other_way():
+    _, y_range = _extent("G1 X0 Y0 Z0.2\nG2 X10 Y0 I5 J0 E1")
+    assert y_range == pytest.approx((0.0, 5.0))
+
+
+def test_an_arc_that_ends_where_it_started_is_a_full_circle():
+    """Not a zero-length move - this is how a round wall is emitted."""
+    x_range, y_range = _extent("G1 X0 Y0 Z0.2\nG3 X0 Y0 I5 J0 E1")
+    assert x_range == pytest.approx((0.0, 10.0))
+    assert y_range == pytest.approx((-5.0, 5.0))
+
+
+def test_an_arc_without_a_centre_falls_back_to_its_chord():
+    """``R`` arcs are not emitted by the slicers this reads; do not guess."""
+    x_range, y_range = _extent("G1 X0 Y0 Z0.2\nG3 X10 Y0 R5 E1")
+    assert (x_range, y_range) == (pytest.approx((0.0, 10.0)), pytest.approx((0.0, 0.0)))
+
+
+def test_homing_and_retraction_are_not_moves():
+    """``G28``/``G10`` start with a move's letter and number, but are neither."""
+    assert list(iter_extrusion_segments("G28 X0 Y0\nG10\nG11")) == []
 
 
 def test_javascript_number_formatting():

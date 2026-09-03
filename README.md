@@ -37,9 +37,19 @@ looping:
   over, the gantry parks up against the mechanical switch at the top (Z184 —
   deliberately above the 180 mm printable height, do not "correct" it), then the
   cool-down, the release hold, the push-off and the wiggle sweep run, and the
-  slicer's own reset and finish sound close the loop. The move to the model
-  centre crawls at F300 rather than a rapid, so the toolhead cannot knock a tall
-  part over.
+  slicer's own reset and finish sound close the loop. The move onto a push line
+  crawls at F300 rather than a rapid, so the toolhead cannot knock a tall part
+  over.
+* **The push follows the parts** (A1 / A1 Mini). The toolhead is a blade 55 mm
+  wide, and half of it has to sit over a part to carry it off, so one pass
+  sweeps everything whose centre is within 27.5 mm of it. Parts are grouped into
+  as few such passes as possible and pushed left to right, each pass coming down
+  to 70% of the height of the *shortest* part it covers — the blade then touches
+  every part of the group instead of passing over the low ones, which is what a
+  single pass at the plate's centre and the tallest part's height used to do.
+  Between passes the blade lifts above everything still standing before the bed
+  comes back for the next one. A plate whose body cannot be measured falls back
+  to that single central pass.
 * **A release hold sits between the cool-down and the push-off** (A1 / A1 Mini).
   Once the bed reaches its target the printer waits `--hold` seconds, so the part
   keeps shrinking off the plate before anything touches it. Nothing in that block
@@ -84,6 +94,8 @@ These run identically for a P1, X1, A1 and A1 Mini:
 | 3. Read the model height | `pipeline.py` | `; max_z_height:` from the header — every Z-drop decision depends on it |
 | 4. Locate the model | `placement.py` | Scan extrusion moves for the X/Y bounding box, filtering prime lines, nozzle wipes and start-code travel |
 | 5. Split the file | `structure.py` | header / `CONFIG_BLOCK` / setup / print body, plus the slicer's machine start and end code kept aside for patching |
+| 5a. Find the parts | `parts.py` | Cluster the extruded moves into separate parts and measure a box for each |
+| 5b. Plan the push | `push_plan.py` | Group the parts into blade-wide bands and give each band an X and a Z, left to right |
 | 6. Keep the extruder | `structure.py` | Recover `T0`..`T3`, otherwise the loop inherits `T255` from the unload sequence and never extrudes |
 | 7. Read the slicer settings | `config_block.py`, `variables.py` | Parse `CONFIG_BLOCK` into values, with G-code and hard-coded fallbacks |
 | 8. Render the templates | `template.py` | `[name]`, `{expression}` and `{if ...}{endif}` substitution, including the `{max_layer_z ± n}` and `{max_layer_z * n}` arithmetic |
@@ -128,6 +140,8 @@ What genuinely differs per machine:
 | Bed sensor offset | −4 °C | −4 °C | none | none |
 | `M190` repeats | 45 | 50 | 30 | 30 |
 | Z-drop | 70% of height, Z0.2 under 6 mm | 70% of height, Z0.2 under 6 mm | top − 30 mm, Z1 under 31 mm | top − 30 mm, Z1 under 31 mm |
+| Blade / overlap | 55 mm × 0.5 | 55 mm × 0.5 | declared, unused | declared, unused |
+| Push lines | one per part or X band | one per part or X band | 3 fixed lanes | 3 fixed lanes |
 | Sweep | wiggle, 6 positions | wiggle, 4 positions | — | — |
 | Release hold | yes | yes | — | — |
 | Push-off beep | yes | yes | yes | yes |
@@ -171,22 +185,55 @@ it from anywhere as a bare `pylooprint` command, `python -m pip install -e .`
 puts it on your PATH while still running the files in this folder (undo with
 `python -m pip uninstall pylooprint`). Entirely optional.
 
-| Option | Default | Meaning |
-|---|---|---|
-| `-n, --loops` | 1 | how many copies |
-| `-t, --temp` | 23 | bed temperature to cool down to before the push-off |
-| `--hold` | 300 | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
-| `-p, --printer` | auto | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
+| Option | Default                         | Meaning |
+|---|---------------------------------|---|
+| `-n, --loops` | 1                               | how many copies |
+| `-t, --temp` | 26                              | bed temperature to cool down to before the push-off |
+| `--hold` | 300                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
+| `-p, --printer` | auto                            | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
 | `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |
-| `--dry-run` | off | report without writing |
+| `--dry-run` | off                             | report without writing |
 
 A file that already carries a Looprint watermark is refused — loop the original,
 not the output.
 
+Every run (including `--dry-run`) reports what it found on the plate and how it
+means to sweep it off, so both can be checked before an unattended batch starts:
+
+```
+printer     : A1 Mini
+loops       : 1
+model height: 77.40 mm
+placement   : left (X 30.7..146.6)
+parts       : 3
+  part 1    : X 8.9..97.6  Y 10.5..77.5  top Z 54.40  (88.7 x 67.0 mm)
+  part 2    : X 76.2..103.8  Y 76.2..103.8  top Z 76.40  (27.7 x 27.7 mm)
+  part 3    : X 120.6..171.4  Y 9.6..60.4  top Z 33.40  (50.8 x 50.8 mm)
+push plan   : 2 line(s), left to right (blade 55 mm, reach 27.5 mm)
+  line 1    : X 71.62  Z 38.08  (parts 1, 2)
+  line 2    : X 145.99  Z 23.38  (part 3)
+```
+
+Those X and Z values are the ones written into the G-code — the report and the
+push are planned by the same function, so they cannot drift apart.
+
+The parts are found from the geometry, not from the slicer's object markers: the
+extruded moves are clustered, so a single object holding several separate bodies
+is reported as several parts — and, the other way round, two objects printed
+touching each other are one part, because that is what comes off the plate. Two
+lumps closer than 4 mm count as one; the skirt, the brim and the prime tower are
+left out, because a loop drawn around everything would otherwise fuse the whole
+plate into one part.
+
+Arc moves (`G2`/`G3`, which the slicer emits when arc fitting is on) are followed
+around their curve. A round wall is a single arc whose two ends nearly meet, so
+reading it as a straight line would lose the part entirely — that applies to the
+eject keep-out check as much as to the part count.
+
 Example:
 
 ```bash
-# twenty copies, ejecting each one, cooling to 23 C first
+# twenty copies, ejecting each one, cooling to 26 C first
 python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -n 20 -o batch.gcode.3mf
 
 # one copy that dismounts itself, with a warmer release
@@ -220,6 +267,12 @@ The suite is anchored on two real reference files:
   plates in `tests/test gcode/`: a full-plate cube that must be refused, a cube
   shifted clear of the corner, and the plate whose bounding box covers the corner
   while its material stays clear of it.
+* **`test_push_plan.py`** — the push planner: which parts share a line, that a
+  line comes down to the shortest part it pushes, that the lines run left to
+  right, and that the blade lifts clear before the bed comes back.
+* **`test_parts.py`** — the part finder: parts standing close together, the skirt
+  that loops around all of them, travel moves crossing the gaps, and the two
+  in-repo plates, whose single part has to match the model's own bounding box.
 * **`test_release_hold.py`** — the wait and the push-off beep: that the block
   never moves the machine, that every profile beeps before its eject sequence,
   and that the beep survives `--hold 0`.

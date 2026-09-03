@@ -50,6 +50,9 @@ SUITABLE = PLATES / "A1mini_cube160h180_sutable.gcode.3mf"
 #: The plate the bounding-box check used to refuse: it reaches X14 at the front
 #: and Y169 in the middle, so its box covers the corner while no material does.
 TRPASLIK = PLATES / "trpaslik+3mf.gcode.3mf"
+#: Four cones, two of them touching, sliced with arc fitting on - the plate that
+#: pins both the part finder's merging and its handling of ``G2``/``G3``.
+CONE_MULTI = PLATES / "A1mini_cone_multi.gcode.3mf"
 
 
 def _require(path: Path) -> Path:
@@ -100,6 +103,12 @@ def suitable_project() -> Path:
 def trpaslik_project() -> Path:
     """Wide plate that spans the keep-out corner without entering it."""
     return _require(TRPASLIK)
+
+
+@pytest.fixture(scope="session")
+def cone_multi_project() -> Path:
+    """Four cones drawn with arc moves, two of them touching each other."""
+    return _require(CONE_MULTI)
 
 
 def without_release_hold(code: str) -> str:
@@ -171,6 +180,33 @@ _PUSH_BLOCK_UPDATES = (
         "",
     ),
 )
+
+
+#: What brackets the push-off, in a reference file (the old single line) and in
+#: today's output (a run of lines planned from the parts).
+_PUSH_SECTIONS = (
+    (";======= LOOPRINT PUSH PLAN =======", ";======= END LOOPRINT PUSH PLAN ======="),
+    (
+        "M220 S100 ; Reset to standard speed for safe push-off",
+        "G1 Z1 F600\t\t;move nozzle closer to the bed when using tall parts",
+    ),
+)
+
+
+def without_push_block(code: str) -> str:
+    """Cut the push-off out, so a comparison cannot depend on its contents.
+
+    The push is no longer one fixed block of text: it is a line per part, at a
+    height per part, worked out from the plate in hand.  A reference file cannot
+    pin that, so ``test_push_plan.py`` pins it instead and the golden tests
+    compare everything around it - the cool-down, the hold, the sweep, the tail.
+    """
+    for start_marker, end_marker in _PUSH_SECTIONS:
+        if start_marker in code and end_marker in code:
+            start = code.index(start_marker)
+            end = code.index(end_marker, start) + len(end_marker)
+            return code[:start].rstrip("\n") + "\n" + code[end:].lstrip("\n")
+    raise AssertionError("no push-off found to cut out")
 
 
 def with_current_push_block(expected: str) -> str:

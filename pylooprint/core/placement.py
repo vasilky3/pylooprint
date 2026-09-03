@@ -13,8 +13,13 @@ reasons:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
+from typing import Iterator, NamedTuple
+
+#: Heading the slicer puts in front of each run of moves, naming what it prints.
+FEATURE_MARKER = "; FEATURE:"
 
 MIN_POINTS_REQUIRED = 50
 MAX_DATA_POINTS = 10000
@@ -34,7 +39,19 @@ _E_RE = re.compile(r"E([\d.-]+)")
 #: Same axes, but signed - a bed-slinger plate starts at a negative X.
 _SIGNED_X_RE = re.compile(r"X(-?[\d.]+)")
 _SIGNED_Y_RE = re.compile(r"Y(-?[\d.]+)")
+_SIGNED_Z_RE = re.compile(r"Z(-?[\d.]+)")
 _SIGNED_E_RE = re.compile(r"E(-?[\d.]+)")
+#: Arc centre, as an offset from where the move starts.
+_SIGNED_I_RE = re.compile(r"I(-?[\d.]+)")
+_SIGNED_J_RE = re.compile(r"J(-?[\d.]+)")
+
+#: A move: ``G0``/``G1`` straight, ``G2``/``G3`` arc.  The lookahead keeps
+#: ``G28`` (home) and ``G10`` (retract) out - both would otherwise read as one.
+_MOVE_RE = re.compile(r"G([0-3])(?![\d.])")
+
+#: How finely an arc is chopped into straight chords, and the ceiling on it.
+ARC_CHORD_MM = 1.0
+MAX_ARC_CHORDS = 360
 
 
 @dataclass(frozen=True)
@@ -68,6 +85,11 @@ def measure_extrusion_bounds(print_body: str) -> ExtrusionBounds | None:
     for a collision check - the heuristics discard, among other things, every
     point below X30, which is exactly where a collision would happen.
 
+    Only the point each move *ends* at is measured, so a move that draws out of
+    a travel is measured from where it lands rather than where it set off, and
+    an arc counts as its endpoint rather than its curve.  Walk
+    :func:`iter_extrusion_segments` instead when the path itself matters.
+
     ``None`` when the body contains nothing to measure.
     """
     xs: list[float] = []
@@ -75,7 +97,7 @@ def measure_extrusion_bounds(print_body: str) -> ExtrusionBounds | None:
 
     for raw in print_body.split("\n"):
         line = raw.lstrip()
-        if not (line.startswith("G1") or line.startswith("G0")):
+        if _MOVE_RE.match(line) is None:
             continue
         extrusion = _SIGNED_E_RE.search(line)
         if extrusion is None or _safe_float(extrusion.group(1)) <= 0:
@@ -93,6 +115,118 @@ def measure_extrusion_bounds(print_body: str) -> ExtrusionBounds | None:
     return ExtrusionBounds(min(xs), max(xs), min(ys), max(ys))
 
 
+class ExtrusionSegment(NamedTuple):
+    """One extruding move: where it went, at what height, in which feature."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    z: float
+    #: The slicer's ``; FEATURE:`` heading this move sits under, or ``""``.
+    feature: str
+
+
+def iter_extrusion_segments(print_body: str) -> Iterator[ExtrusionSegment]:
+    """Every extruding move in the print body, as whole segments.
+
+    Coordinates are modal, so the position is tracked across travel moves too,
+    and whole *segments* come out rather than endpoints - diagonal infill can
+    cross a small rectangle with both of its ends outside it.  ``z`` is the
+    height the move ends at; the slicer sets it on lines of its own, so it is
+    carried the same way X and Y are.
+
+    Travel moves are not emitted, but they are still walked: skipping them would
+    put the next extrusion's start point wherever the last one ended, which
+    invents a segment straight across the plate.
+
+    Arcs (``G2``/``G3``, which the slicer emits when arc fitting is on) come out
+    as a run of short chords.  A round wall is one arc command with its two ends
+    close together, so anything that only looked at the endpoints would miss the
+    whole of it.
+    """
+    x: float | None = None
+    y: float | None = None
+    z = 0.0
+    feature = ""
+
+    for raw in print_body.split("\n"):
+        line = raw.lstrip()
+        if line.startswith(FEATURE_MARKER):
+            feature = line[len(FEATURE_MARKER) :].strip()
+            continue
+        move = _MOVE_RE.match(line)
+        if move is None:
+            continue
+
+        x_match = _SIGNED_X_RE.search(line)
+        y_match = _SIGNED_Y_RE.search(line)
+        z_match = _SIGNED_Z_RE.search(line)
+        next_x = float(x_match.group(1)) if x_match else x
+        next_y = float(y_match.group(1)) if y_match else y
+        if z_match:
+            z = _safe_float(z_match.group(1))
+
+        extrusion = _SIGNED_E_RE.search(line)
+        extruding = extrusion is not None and _safe_float(extrusion.group(1)) > 0
+        if extruding and next_x is not None and next_y is not None:
+            # Before the first positioned move the previous point is unknown, so
+            # the move can only be judged by where it ends.
+            start_x = x if x is not None else next_x
+            start_y = y if y is not None else next_y
+            clockwise = move.group(1) == "2"
+            for x0, y0, x1, y1 in _flatten(line, start_x, start_y, next_x, next_y, clockwise):
+                yield ExtrusionSegment(x0, y0, x1, y1, z, feature)
+
+        x, y = next_x, next_y
+
+
+def _flatten(
+    line: str, x0: float, y0: float, x1: float, y1: float, clockwise: bool
+) -> Iterator[tuple[float, float, float, float]]:
+    """The move as straight segments: one for a line, a chord run for an arc.
+
+    Arcs are given as offsets from the current position to the centre (``I``,
+    ``J``), which is the form the slicers emit.  Anything else - an ``R`` arc, a
+    ``G2`` with no centre at all - falls back to the straight chord between the
+    two ends, which is the best the line itself says.
+    """
+    i_match = _SIGNED_I_RE.search(line)
+    j_match = _SIGNED_J_RE.search(line)
+    if i_match is None or j_match is None:
+        yield x0, y0, x1, y1
+        return
+
+    centre_x = x0 + _safe_float(i_match.group(1))
+    centre_y = y0 + _safe_float(j_match.group(1))
+    radius = math.hypot(x0 - centre_x, y0 - centre_y)
+    if radius <= 0:
+        yield x0, y0, x1, y1
+        return
+
+    start = math.atan2(y0 - centre_y, x0 - centre_x)
+    sweep = math.atan2(y1 - centre_y, x1 - centre_x) - start
+    # Wrap the sweep into the commanded direction.  A move that ends where it
+    # started is a full circle, not a zero-length arc, so zero wraps to a turn.
+    turn = 2 * math.pi
+    if clockwise:
+        sweep -= turn * (math.floor(sweep / turn) + 1)
+    else:
+        sweep += turn * (math.floor(-sweep / turn) + 1)
+
+    steps = min(MAX_ARC_CHORDS, max(1, math.ceil(abs(sweep) * radius / ARC_CHORD_MM)))
+    previous_x, previous_y = x0, y0
+    for step in range(1, steps + 1):
+        angle = start + sweep * step / steps
+        point_x = centre_x + radius * math.cos(angle)
+        point_y = centre_y + radius * math.sin(angle)
+        yield previous_x, previous_y, point_x, point_y
+        previous_x, previous_y = point_x, point_y
+
+    # Land exactly on the commanded endpoint, whatever the arithmetic did.
+    yield previous_x, previous_y, x1, y1
+
+
 def extrusion_enters_zone(
     print_body: str, min_x: float, max_x: float, min_y: float, max_y: float
 ) -> tuple[float, float] | None:
@@ -102,36 +236,13 @@ def extrusion_enters_zone(
     reaches the left edge in one place and the back edge in another has a box
     that covers the corner while leaving the corner itself empty.  This walks
     the actual moves instead.
-
-    Whole *segments* are tested, not just their endpoints - diagonal infill can
-    cross a small keep-out rectangle with both ends outside it.  Coordinates are
-    modal, so the position is tracked across travel moves too.
     """
-    x: float | None = None
-    y: float | None = None
-
-    for raw in print_body.split("\n"):
-        line = raw.lstrip()
-        if not (line.startswith("G1") or line.startswith("G0")):
-            continue
-
-        x_match = _SIGNED_X_RE.search(line)
-        y_match = _SIGNED_Y_RE.search(line)
-        next_x = float(x_match.group(1)) if x_match else x
-        next_y = float(y_match.group(1)) if y_match else y
-
-        extrusion = _SIGNED_E_RE.search(line)
-        extruding = extrusion is not None and _safe_float(extrusion.group(1)) > 0
-        if extruding and next_x is not None and next_y is not None:
-            # Before the first positioned move the previous point is unknown, so
-            # the move can only be judged by where it ends.
-            start_x = x if x is not None else next_x
-            start_y = y if y is not None else next_y
-            hit = _segment_inside(start_x, start_y, next_x, next_y, min_x, max_x, min_y, max_y)
-            if hit is not None:
-                return hit
-
-        x, y = next_x, next_y
+    for segment in iter_extrusion_segments(print_body):
+        hit = _segment_inside(
+            segment.x0, segment.y0, segment.x1, segment.y1, min_x, max_x, min_y, max_y
+        )
+        if hit is not None:
+            return hit
 
     return None
 

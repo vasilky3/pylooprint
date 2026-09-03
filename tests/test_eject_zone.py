@@ -150,6 +150,21 @@ def test_travel_and_retraction_moves_are_not_model():
     assert bounds == ExtrusionBounds(100.0, 100.0, 100.0, 100.0)
 
 
+def test_an_arc_bulging_into_the_corner_is_caught():
+    """With arc fitting on, a round wall is one ``G3`` that ends where it began.
+
+    Both of its ends sit outside the corner; only the circle it draws reaches in.
+    """
+    body = "; CHANGE_LAYER\nG1 X18 Y165 F9000\nG3 X18 Y165 I-8 J0 E1 F1200\n"
+    with pytest.raises(UnsafeEjectZoneError):
+        A1_MINI.check_eject_clearance(body)
+
+
+def test_an_arc_clear_of_the_corner_is_accepted():
+    body = "; CHANGE_LAYER\nG1 X60 Y165 F9000\nG3 X60 Y165 I-8 J0 E1 F1200\n"
+    A1_MINI.check_eject_clearance(body)
+
+
 def test_extruding_away_from_a_travel_inside_the_corner_still_counts():
     """The travel lays nothing, but the move leaving it draws from that point."""
     body = "; CHANGE_LAYER\nG1 X5 Y170 F9000\nG1 X100 Y100 E0.5 F1200\n"

@@ -23,9 +23,10 @@ from pylooprint.core.patching import PatchError
 from pylooprint.core.project import ThreeMfProject
 from pylooprint.pipeline import build_loops, detect_printer
 from pylooprint.printers import get_profile
+from pylooprint.printers.bedslinger import PUSH_PLAN_START
 from pylooprint.settings import LoopSettings
 
-from conftest import INPLACE_TEMP, with_current_push_block, without_release_hold
+from conftest import INPLACE_TEMP, without_push_block, without_release_hold
 
 _EXECUTABLE_END = "; EXECUTABLE_BLOCK_END"
 #: The loop assembler appends this after the start code; the reference file,
@@ -68,15 +69,17 @@ def test_printer_and_model_are_detected(golden_project):
 
 
 def test_machine_end_code_matches_the_reference(golden_project, inplace_reference):
-    """The cool-down, push-off and sweep are the reference file's, byte for byte.
+    """The cool-down and the sweep are the reference file's, byte for byte.
 
-    Apart from two blocks: the reference predates the 70% Z-drop rule and the
-    comments that came with it, and it knows nothing about the hold and the
-    push-off beep, which ``test_release_hold.py`` pins instead.
+    Two blocks are cut out of both sides first: the hold with its push-off beep,
+    and the push itself, which is now planned from the parts on the plate rather
+    than fixed.  ``test_release_hold.py`` and ``test_push_plan.py`` pin those.
     """
-    produced = _build(golden_project).gcode
-    expected = with_current_push_block(_machine_end_code(inplace_reference))
-    assert without_release_hold(_machine_end_code(produced)) == without_release_hold(expected)
+    produced = _machine_end_code(_build(golden_project).gcode)
+    expected = _machine_end_code(inplace_reference)
+    assert without_push_block(without_release_hold(produced)) == without_push_block(
+        without_release_hold(expected)
+    )
 
 
 def test_machine_start_code_matches_the_reference(golden_project, inplace_reference):
@@ -125,10 +128,10 @@ def test_slicer_end_code_is_kept_around_the_eject_sequence(golden_project):
 
 
 def test_align_move_is_slow(golden_project):
-    """The in-place strategy crawls to the model centre instead of a rapid."""
+    """The in-place strategy crawls onto each push line instead of a rapid."""
     gcode = _build(golden_project).gcode
-    assert "F300 ; Align nozzle with model center for push" in gcode
-    assert "F12000 ; Align nozzle with model center for push" not in gcode
+    assert "F300 ; align the blade with this line" in gcode
+    assert "F12000 ; align the blade with this line" not in gcode
 
 
 def test_slicer_z_lift_is_carried_over(golden_project):
@@ -143,7 +146,7 @@ def test_each_loop_repeats_the_whole_plate(golden_project, loops):
     for index in range(1, loops + 1):
         assert gcode.count(f"; >>> LOOP {index} / {loops} <<<") == 1
     assert gcode.count("; EXECUTABLE_BLOCK_START") == loops
-    assert gcode.count("G1 Y-0.5 F300") == loops
+    assert gcode.count(PUSH_PLAN_START) == loops
     assert gcode.count("G0 E50 F100") == 2 * loops
     # Header and settings dump only once.
     assert gcode.count("; HEADER_BLOCK_START") == 1

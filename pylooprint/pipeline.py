@@ -11,7 +11,9 @@ from datetime import datetime
 
 from .core.constants import FALLBACK_MAX_Z_HEIGHT_MM, LOOPRINT_WATERMARKS, MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_RE
 from .core.loop_builder import LoopPlan, build_looped_gcode
+from .core.parts import PartBounds, find_parts
 from .core.placement import ModelPlacement, determine_model_placement
+from .core.push_plan import PushLine
 from .core.project import PROJECT_SETTINGS, SLICE_INFO, ThreeMfProject
 from .core.structure import split_gcode
 from .core.template import centre_coordinates, resolve_max_layer_z, substitute_first_layer_centre
@@ -31,6 +33,11 @@ class BuildResult:
     placement: ModelPlacement
     max_layer_z: float
     max_layer_z_from_header: bool
+    #: One box per separate part on the plate, front-left first.
+    parts: list[PartBounds] = field(default_factory=list)
+    #: The push lines planned from those parts, left to right.  Empty for a
+    #: profile whose push-off does not follow the parts.
+    push_lines: list[PushLine] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -73,6 +80,12 @@ def build_loops(
     # brings the toolhead down to eject the part.
     profile.check_eject_clearance(structure.print_body)
 
+    # What is actually on the plate, part by part, and the push lines the
+    # profile plans from it.  The end code asks the profile for the same plan,
+    # so what is reported is what the printer will run.
+    parts = find_parts(structure.print_body)
+    push_lines = profile.push_plan(parts)
+
     bed = profile.bed_bounds
     placement = determine_model_placement(gcode, bed.min_x, bed.max_x, bed.min_y, bed.max_y)
     values = extract_variable_values(gcode, structure.config, placement.as_bounds())
@@ -82,6 +95,7 @@ def build_loops(
         settings=settings,
         model_min_x=placement.min_x,
         model_max_x=placement.max_x,
+        parts=tuple(parts),
         direction=placement.direction,
     )
 
@@ -109,6 +123,8 @@ def build_loops(
         placement=placement,
         max_layer_z=max_layer_z,
         max_layer_z_from_header=from_header,
+        parts=parts,
+        push_lines=push_lines,
         warnings=warnings,
     )
 
