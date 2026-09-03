@@ -13,6 +13,11 @@ class A1Profile(BedSlingerProfile):
     bed_bounds = BedBounds(min_x=-48, max_x=256, min_y=0, max_y=262)
     m190_repeat = 45
 
+    #: Same push geometry as the A1 Mini - see ``a1_mini.PUSH_HEIGHT_FACTOR``.
+    push_height_factor = 0.7
+    push_min_model_height = 6.0
+    push_min_z = 0.2
+
     y_forward = 262
     wiggle_x_left = -48
     wiggle_x_right = 256

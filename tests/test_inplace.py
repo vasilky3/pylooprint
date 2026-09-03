@@ -25,7 +25,7 @@ from pylooprint.pipeline import build_loops, detect_printer
 from pylooprint.printers import get_profile
 from pylooprint.settings import LoopSettings
 
-from conftest import INPLACE_TEMP
+from conftest import INPLACE_TEMP, with_current_push_block, without_release_hold
 
 _EXECUTABLE_END = "; EXECUTABLE_BLOCK_END"
 #: The loop assembler appends this after the start code; the reference file,
@@ -68,9 +68,15 @@ def test_printer_and_model_are_detected(golden_project):
 
 
 def test_machine_end_code_matches_the_reference(golden_project, inplace_reference):
-    """The cool-down, push-off and sweep are the reference file's, byte for byte."""
+    """The cool-down, push-off and sweep are the reference file's, byte for byte.
+
+    Apart from two blocks: the reference predates the 70% Z-drop rule and the
+    comments that came with it, and it knows nothing about the hold and the
+    push-off beep, which ``test_release_hold.py`` pins instead.
+    """
     produced = _build(golden_project).gcode
-    assert _machine_end_code(produced) == _machine_end_code(inplace_reference)
+    expected = with_current_push_block(_machine_end_code(inplace_reference))
+    assert without_release_hold(_machine_end_code(produced)) == without_release_hold(expected)
 
 
 def test_machine_start_code_matches_the_reference(golden_project, inplace_reference):

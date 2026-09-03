@@ -1,7 +1,7 @@
 """Bambu Lab X1 / X1C.
 
-Same push kinematics as the P1, but the end code is assembled from Factorian's
-X1 blocks rather than spliced into a stock template: the X1 has a filament
+Same push kinematics as the P1, but the end code is assembled from the X1
+template blocks rather than spliced into a stock template: the X1 has a filament
 cutter and an auxiliary fan that have to be sequenced before the cool-down.
 """
 
@@ -30,6 +30,7 @@ class X1Profile(CoreXyProfile):
         code += load_template("end_x1_cooldown.gcode")
         code += self.cooldown_block(temp) + "\n"
         code += load_template("end_x1_fans_off.gcode")
+        code += self.release_beep() + "\n"
         code += load_template("end_x1_zoffset.gcode")
         code += self.push_gcode(lanes)
 

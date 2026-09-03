@@ -34,20 +34,22 @@ looping:
   `G0 E50 F100` — purge into the air instead.
 * **The end code gets an eject sequence spliced in.** Everything the slicer does
   first (timelapse, filament unload, hotend off) is kept, the Z-lift is carried
-  over, the gantry parks up against the mechanical switch at the top (Z184.5 —
+  over, the gantry parks up against the mechanical switch at the top (Z184 —
   deliberately above the 180 mm printable height, do not "correct" it), then the
   cool-down, the release hold, the push-off and the wiggle sweep run, and the
   slicer's own reset and finish sound close the loop. The move to the model
   centre crawls at F300 rather than a rapid, so the toolhead cannot knock a tall
   part over.
 * **A release hold sits between the cool-down and the push-off** (A1 / A1 Mini).
-  Once the bed reaches its target the printer waits `--hold` seconds and then
-  shakes the bed through a 15→60 Hz frequency sweep, the way an input-shaping
-  run does, to break the part loose before anything pushes it. Nothing in that
-  block moves Z or X: the toolhead has to stay parked at Z184.5, which is what
-  keeps a limit-switch fan mod running for the whole hold. The shake uses
-  relative moves and ends exactly where it started, so the eject keep-out zone
-  below still describes the right patch of plate.
+  Once the bed reaches its target the printer waits `--hold` seconds, so the part
+  keeps shrinking off the plate before anything touches it. Nothing in that block
+  moves the machine: the toolhead has to stay parked at Z184, which is what keeps
+  a limit-switch fan mod running for the whole hold, and the bed has to stay
+  where the eject keep-out zone below was measured for.
+* **Every printer beeps right before it pushes** — one short `M1006` tone, the
+  same macro the slicer's finish sound uses. The machine has been standing still
+  through the cool-down, so the beep is the only warning that it is about to move
+  again and throw the part off the plate.
 
 Everything the printer profile configured — flow calibration, bed levelling,
 build-plate detection — survives untouched.
@@ -84,7 +86,7 @@ These run identically for a P1, X1, A1 and A1 Mini:
 | 5. Split the file | `structure.py` | header / `CONFIG_BLOCK` / setup / print body, plus the slicer's machine start and end code kept aside for patching |
 | 6. Keep the extruder | `structure.py` | Recover `T0`..`T3`, otherwise the loop inherits `T255` from the unload sequence and never extrudes |
 | 7. Read the slicer settings | `config_block.py`, `variables.py` | Parse `CONFIG_BLOCK` into values, with G-code and hard-coded fallbacks |
-| 8. Render the templates | `template.py` | `[name]`, `{expression}` and `{if ...}{endif}` substitution, including the `{max_layer_z ± n}` arithmetic |
+| 8. Render the templates | `template.py` | `[name]`, `{expression}` and `{if ...}{endif}` substitution, including the `{max_layer_z ± n}` and `{max_layer_z * n}` arithmetic |
 | 9. Assemble the loops | `loop_builder.py` | Banner, per-loop header/config or `M400`, setup, start code, `M220 S100`, print, end code |
 | 10. Repack | `project.py` | Write the new plate G-code back into a copy of the zip |
 
@@ -125,9 +127,10 @@ What genuinely differs per machine:
 | Bed X range | −48..256 | −13..180 | 10..246 | 10..246 |
 | Bed sensor offset | −4 °C | −4 °C | none | none |
 | `M190` repeats | 45 | 50 | 30 | 30 |
-| Z-drop threshold | 41 mm | 41 mm | 31 mm | 31 mm |
+| Z-drop | 70% of height, Z0.2 under 6 mm | 70% of height, Z0.2 under 6 mm | top − 30 mm, Z1 under 31 mm | top − 30 mm, Z1 under 31 mm |
 | Sweep | wiggle, 6 positions | wiggle, 4 positions | — | — |
 | Release hold | yes | yes | — | — |
+| Push-off beep | yes | yes | yes | yes |
 | Eject keep-out | — | X 0–15, Y 150–180 | — | — |
 | Extras | — | in-place patching | splices lanes into Factorian's template | cutter sequence, aux fan |
 
@@ -137,7 +140,8 @@ nothing in `core/` changes.
 ### The A1 Mini eject keep-out
 
 The A1 Mini push-off parks the nozzle off the plate at X-13 / Y180 and then
-drops the toolhead to Z1. The nozzle clears the plate, but the toolhead *body*
+drops the toolhead to the push height — as low as Z0.2 for a part under 6 mm.
+The nozzle clears the plate, but the toolhead *body*
 overhangs the back-left corner by 15 mm in X and 30 mm in Y, so anything printed
 in `X 0–15, Y 150–180` is struck on the way down. A build whose model prints
 there is refused before any G-code is generated:
@@ -171,7 +175,7 @@ puts it on your PATH while still running the files in this folder (undo with
 |---|---|---|
 | `-n, --loops` | 1 | how many copies |
 | `-t, --temp` | 23 | bed temperature to cool down to before the push-off |
-| `--hold` | 300 | A1/A1 Mini: seconds to wait at the park height before the bed shake (`0` skips the wait; the shake always runs) |
+| `--hold` | 300 | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
 | `-p, --printer` | auto | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
 | `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |
 | `--dry-run` | off | report without writing |
@@ -216,9 +220,9 @@ The suite is anchored on two real reference files:
   plates in `tests/test gcode/`: a full-plate cube that must be refused, a cube
   shifted clear of the corner, and the plate whose bounding box covers the corner
   while its material stays clear of it.
-* **`test_release_hold.py`** — the wait and the frequency sweep: that the block
-  never moves Z, that the bed returns to where it started, and that the shake
-  survives `--hold 0`.
+* **`test_release_hold.py`** — the wait and the push-off beep: that the block
+  never moves the machine, that every profile beeps before its eject sequence,
+  and that the beep survives `--hold 0`.
 * **`test_cli.py`** — end-to-end runs through the console entry point.
 
 Tests that need the sample files skip themselves if the `Gcode` folder is absent.

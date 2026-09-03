@@ -13,24 +13,14 @@ from __future__ import annotations
 from ..settings import LoopSettings
 from .base import EndCodeContext, PrinterProfile, load_template
 
-#: Fixed X feedrate of the wiggle sweep, as in Factorian's End_A1 templates.
+#: Fixed X feedrate of the wiggle sweep.
 WIGGLE_SPEED = 2000
 
 #: Feedrate of the "move the nozzle over the model centre" travel that precedes
-#: the push. Factorian's template does it as a rapid; the in-place strategy
+#: the push. The template end codes travel at rapid speed; the in-place strategy
 #: crawls instead, so the toolhead cannot knock a tall part over on the way.
 ALIGN_FEED_RAPID = 12000
 ALIGN_FEED_SLOW = 300
-
-# --- release shake ---------------------------------------------------------
-#: Peak-to-peak Y stroke of the shake, in mm.
-SHAKE_STROKE_MM = 2.0
-#: Frequency sweep, low to high, in Hz - the same idea as an input-shaping run.
-SHAKE_MIN_HZ = 15.0
-SHAKE_MAX_HZ = 60.0
-#: Steps in the sweep, and how many out-and-back cycles each step runs.
-SHAKE_STEPS = 16
-SHAKE_CYCLES = 8
 
 #: Markers bracketing the block, so it can be located in a finished file.
 HOLD_START = ";======= LOOPRINT RELEASE HOLD ======="
@@ -51,6 +41,11 @@ class BedSlingerProfile(PrinterProfile):
     wiggle_y_positions: tuple[int, ...]
     #: Final "park the bed" line - the two machines word it differently.
     wiggle_final_line: str
+    #: Push geometry: the fraction of the model height the nozzle drops to, and
+    #: the fixed Z it uses instead for a model shorter than the threshold.
+    push_height_factor: float
+    push_min_model_height: float
+    push_min_z: float
 
     def apply_temp_offset(self, temp: int) -> int:
         """The bed sensor reads ~4 degrees high, and 15 C is the floor."""
@@ -59,8 +54,12 @@ class BedSlingerProfile(PrinterProfile):
     def push_gcode(self, align_feed: int = ALIGN_FEED_RAPID) -> str:
         """Align the nozzle with the model centre, drop Z, drive the bed forward."""
         template = load_template("a1_push.gcode")
-        return template.replace("@Y_FORWARD@", _format_number(self.y_forward)).replace(
-            "@ALIGN_FEED@", str(align_feed)
+        return (
+            template.replace("@Y_FORWARD@", _format_number(self.y_forward))
+            .replace("@ALIGN_FEED@", str(align_feed))
+            .replace("@PUSH_FACTOR@", _format_number(self.push_height_factor))
+            .replace("@PUSH_MIN_HEIGHT@", _format_number(self.push_min_model_height))
+            .replace("@PUSH_MIN_Z@", _format_number(self.push_min_z))
         )
 
     def wiggle_sweep(self) -> str:
@@ -76,42 +75,27 @@ class BedSlingerProfile(PrinterProfile):
         return "".join(lines)
 
     def release_hold(self, settings: LoopSettings) -> str:
-        """Wait at the park height, then shake the bed through a frequency sweep.
+        """Wait at the park height, then beep once, before the push-off.
 
-        Runs between the cool-down wait and the push-off, and deliberately moves
-        neither Z nor X: the toolhead has to stay at the park height, because on
-        a printer with the limit-switch fan mod that is what keeps the fan
-        running for the whole hold.
+        Runs between the cool-down wait and the push-off.  Nothing in it moves
+        the machine: the toolhead has to stay at the park height, because on a
+        printer with the limit-switch fan mod that is what keeps the fan running
+        for the whole hold, and the bed has to stay where the eject keep-out
+        zone was measured for.
 
-        The shake is unconditional; ``hold_seconds`` only controls the wait in
+        The beep is unconditional; ``hold_seconds`` only controls the wait in
         front of it.
         """
         lines = [
             HOLD_START,
-            "; Hold at the park height while the part keeps cooling, then shake the",
-            "; bed loose.  Nothing here moves Z or X - the toolhead stays parked.",
+            "; Hold at the park height while the part keeps cooling, then sound the",
+            "; push-off warning.  Nothing here moves the bed or the toolhead.",
             "M400 ; wait for all motion to complete",
         ]
         if settings.hold_seconds > 0:
             lines.append(f"G4 S{settings.hold_seconds} ; hold before the push-off")
 
-        stroke = _format_number(SHAKE_STROKE_MM)
-        lines += [
-            "",
-            f";------- bed shake: {_format_number(SHAKE_MIN_HZ)}"
-            f" -> {_format_number(SHAKE_MAX_HZ)} Hz sweep, {stroke} mm stroke -------",
-            "G91 ; relative moves, so the bed ends exactly where it started",
-        ]
-        for hertz in _sweep_frequencies():
-            # One cycle covers two strokes in 1/f seconds.
-            feed = round(120 * SHAKE_STROKE_MM * hertz)
-            lines.append(f"; --- {hertz:.1f} Hz ---")
-            lines += [f"G1 Y-{stroke} F{feed}\nG1 Y{stroke} F{feed}"] * SHAKE_CYCLES
-        lines += [
-            "G90 ; back to absolute positioning",
-            "M400",
-            HOLD_END,
-        ]
+        lines += ["", self.release_beep(), HOLD_END]
         return "\n".join(lines)
 
     def end_code(self, context: EndCodeContext) -> str:
@@ -133,12 +117,6 @@ class BedSlingerProfile(PrinterProfile):
     # End-code template file names, supplied by the concrete profiles.
     end_head_template_name: str
     end_tail_template_name: str
-
-
-def _sweep_frequencies() -> list[float]:
-    """``SHAKE_STEPS`` frequencies spread evenly across the sweep range."""
-    span = SHAKE_MAX_HZ - SHAKE_MIN_HZ
-    return [SHAKE_MIN_HZ + span * step / (SHAKE_STEPS - 1) for step in range(SHAKE_STEPS)]
 
 
 def _format_number(value: float) -> str:
