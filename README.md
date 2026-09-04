@@ -221,9 +221,10 @@ The parts are found from the geometry, not from the slicer's object markers: the
 extruded moves are clustered, so a single object holding several separate bodies
 is reported as several parts — and, the other way round, two objects printed
 touching each other are one part, because that is what comes off the plate. Two
-lumps closer than 4 mm count as one; the skirt, the brim and the prime tower are
-left out, because a loop drawn around everything would otherwise fuse the whole
-plate into one part.
+lumps count as one only when the plastic itself is within 2 mm, so parts standing
+a few millimetres apart — which is how a plate is normally arranged — read as
+separate. The skirt, the brim and the prime tower are left out, because a
+loop drawn around everything would otherwise fuse the whole plate into one part.
 
 Arc moves (`G2`/`G3`, which the slicer emits when arc fitting is on) are followed
 around their curve. A round wall is a single arc whose two ends nearly meet, so

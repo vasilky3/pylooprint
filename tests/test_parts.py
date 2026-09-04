@@ -39,6 +39,20 @@ def test_squares_further_apart_than_the_tolerance_are_separate_parts():
     assert [(part.min_y, part.max_y) for part in parts] == [(10, 20), (10, 20), (100, 110)]
 
 
+@pytest.mark.parametrize("apart", [2.5, 3.0, 5.0, 6.0, 6.9, 8.0])
+def test_a_gap_wider_than_the_tolerance_separates_whatever_the_grid_does(apart):
+    """These neighbours all sit within a cell or two of each other.
+
+    Parts on a real plate are spaced like this - the two halves of a split
+    model land about 6.9 mm apart - and reading them as one would push both
+    with a single line, at the height of the taller.
+    """
+    parts = find_parts(_body(_square(10, 10, 10), _square(20 + apart, 10, 10)))
+
+    assert len(parts) == 2
+    assert (parts[0].max_x, parts[1].min_x) == pytest.approx((20.0, 20.0 + apart))
+
+
 def test_squares_closer_than_the_tolerance_are_one_part():
     """A gap the nozzle could not print through is not a gap worth reporting."""
     parts = find_parts(_body(_square(10, 10, 10), _square(21, 10, 10)))
@@ -166,5 +180,5 @@ def test_the_part_reaches_the_model_height_from_the_header(suitable_project):
     assert "; max_z_height: 180" in gcode
 
 
-def test_the_default_tolerance_is_four_millimetres():
-    assert PART_GAP_TOLERANCE == 4.0
+def test_the_default_tolerance_is_two_millimetres():
+    assert PART_GAP_TOLERANCE == 2.0

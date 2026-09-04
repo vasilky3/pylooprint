@@ -10,10 +10,17 @@ operator wants to see before starting an unattended looping run.
 Parts are found from the *geometry*, not from the slicer's object markers: what
 matters is which lumps of plastic are physically separate, and one slicer object
 can hold several of them.  The extruded moves are dropped into a grid of
-``gap``-sized cells, and cells that touch belong to the same part, so:
+``gap``-sized cells; neighbouring cells are then joined only when the plastic in
+them really is within ``gap``, which is what keeps the answer close to the
+question actually asked:
 
 * two extruded points closer together than ``gap`` always land in the same part;
-* points further apart than ``2 * gap`` are never merged directly.
+* two parts further apart than ``gap`` stay apart, unless material from both
+  happens to fall inside one and the same cell - so never beyond ``gap * 1.42``.
+
+Sharing a cell edge is not enough on its own.  Judging by adjacency alone would
+join anything within two cells, which is a whole cell wider than the question
+being asked - and neighbours on a plate are routinely that close.
 """
 
 from __future__ import annotations
@@ -24,7 +31,9 @@ from typing import Iterator
 from .placement import ExtrusionSegment, iter_extrusion_segments
 
 #: How far apart two extrusions have to be before they count as separate parts.
-PART_GAP_TOLERANCE = 4.0
+#: Parts are arranged millimetres apart, so this is deliberately tight: it only
+#: has to swallow the width of a wall and the odd stray move, not a real gap.
+PART_GAP_TOLERANCE = 2.0
 
 #: Features that are not a part, or that would fuse several parts into one: the
 #: skirt is a single loop drawn around *everything* on the plate, a brim shared
@@ -71,10 +80,13 @@ def find_parts(print_body: str, *, gap: float = PART_GAP_TOLERANCE) -> list[Part
         return []
 
     merge = _CellMerge(cells)
-    for cell in cells:
-        for neighbour in _neighbours(cell):
-            if neighbour in cells:
-                merge.union(cell, neighbour)
+    for cell, box in cells.items():
+        for name in _neighbours(cell):
+            neighbour = cells.get(name)
+            # Sharing a grid edge is only what makes two cells worth comparing;
+            # what joins them is the plastic in them being closer than the gap.
+            if neighbour is not None and box.within(neighbour, gap):
+                merge.union(cell, name)
 
     parts: dict[_Cell, _Box] = {}
     for cell, box in cells.items():
@@ -155,6 +167,17 @@ class _Box:
     def absorb(self, other: _Box) -> None:
         self.add(other.min_x, other.min_y, other.min_z)
         self.add(other.max_x, other.max_y, other.max_z)
+
+    def within(self, other: _Box, gap: float) -> bool:
+        """True when the two patches of plastic are no further apart than ``gap``.
+
+        Measured between the boxes, which for a single cell is at most one cell
+        across - so the answer is out by less than a cell, instead of by the
+        whole cell that judging by adjacency alone would cost.
+        """
+        apart_x = max(0.0, max(self.min_x, other.min_x) - min(self.max_x, other.max_x))
+        apart_y = max(0.0, max(self.min_y, other.min_y) - min(self.max_y, other.max_y))
+        return apart_x * apart_x + apart_y * apart_y <= gap * gap
 
     def as_bounds(self) -> PartBounds:
         return PartBounds(self.min_x, self.max_x, self.min_y, self.max_y, self.min_z, self.max_z)
