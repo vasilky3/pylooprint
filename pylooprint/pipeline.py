@@ -11,6 +11,7 @@ from datetime import datetime
 
 from .core.constants import FALLBACK_MAX_Z_HEIGHT_MM, LOOPRINT_WATERMARKS, MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_RE
 from .core.loop_builder import LoopPlan, build_looped_gcode
+from .core.parking import read_slicer_park
 from .core.parts import PartBounds, find_parts
 from .core.placement import ModelPlacement, determine_model_placement
 from .core.push_plan import PushLine
@@ -96,6 +97,9 @@ def build_loops(
         model_min_x=placement.min_x,
         model_max_x=placement.max_x,
         parts=tuple(parts),
+        # Where this plate would leave the head if it were printed once, the
+        # ordinary way.  The last loop finishes there.
+        slicer_park=read_slicer_park(structure.slicer_end_code),
         direction=placement.direction,
     )
 
@@ -105,13 +109,22 @@ def build_loops(
     warnings.extend(machine_code.warnings)
 
     centre_x, centre_y = centre_coordinates(values.get("first_layer_center_no_wipe_tower"))
-    end_code = substitute_first_layer_centre(machine_code.end_code, centre_x, centre_y)
-    end_code = resolve_max_layer_z(end_code, max_layer_z, from_header=from_header)
+
+    def finish(code: str) -> str:
+        """The two passes every end code goes through before it is emitted."""
+        code = substitute_first_layer_centre(code, centre_x, centre_y)
+        return resolve_max_layer_z(code, max_layer_z, from_header=from_header)
+
+    end_code = finish(machine_code.end_code)
+    final_end_code = (
+        finish(machine_code.final_end_code) if machine_code.final_end_code else None
+    )
 
     plan = LoopPlan(
         structure=structure,
         start_code=machine_code.start_code,
         end_code=end_code,
+        final_end_code=final_end_code,
         loops=settings.loops,
         source_name=source_name,
         generated_at=generated_at,

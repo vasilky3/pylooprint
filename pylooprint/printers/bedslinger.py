@@ -35,6 +35,10 @@ HOLD_END = ";======= END LOOPRINT RELEASE HOLD ======="
 PUSH_PLAN_START = ";======= LOOPRINT PUSH PLAN ======="
 PUSH_PLAN_END = ";======= END LOOPRINT PUSH PLAN ======="
 
+#: And for the park that closes the job, after the last copy is off the plate.
+PARK_START = ";======= LOOPRINT FINAL PARK ======="
+PARK_END = ";======= END LOOPRINT FINAL PARK ======="
+
 
 class BedSlingerProfile(PrinterProfile):
     """Common behaviour of the Y-axis push-off printers."""
@@ -175,7 +179,34 @@ class BedSlingerProfile(PrinterProfile):
         lines += ["", self.release_beep(), HOLD_END]
         return "\n".join(lines)
 
-    def end_code(self, context: EndCodeContext) -> str:
+    def final_park(self, context: EndCodeContext) -> str:
+        """Put the head back where an ordinary print of this plate leaves it.
+
+        The slicer's own lift comes first: the sweep ends a millimetre above the
+        plate, and the park it copies finishes with a *relative* Z move, which
+        from there would drive the nozzle into the plate instead of down to just
+        under the lift height.
+
+        Empty when the file carries no park to copy - better to leave the head
+        where the sweep put it than to invent a position for a machine whose end
+        code is shaped differently.
+        """
+        park = context.slicer_park
+        if park is None or not park.moves:
+            return ""
+
+        lines = [PARK_START, "; Back to where an ordinary print leaves the head."]
+        if park.lift:
+            lines += ["G90", park.lift]
+        lines += [park.moves, PARK_END]
+        return "\n".join(lines) + "\n"
+
+    def final_end_code(self, context: EndCodeContext) -> str | None:
+        """The last loop parks the head; the ones before it just carry on."""
+        park = self.final_park(context)
+        return self.end_code(context, park=park) if park else None
+
+    def end_code(self, context: EndCodeContext, park: str = "") -> str:
         temp = context.settings.cooldown_temp
         body = (
             load_template(self.end_head_template_name)
@@ -184,6 +215,10 @@ class BedSlingerProfile(PrinterProfile):
             .replace("@PUSH@", self.push_gcode(context))
         )
         body += "\n" + self.wiggle_sweep()
+        # Before the tail: that is where the slicer's resets, its finish sound
+        # and the M18 that drops the motors live, and the park has to happen
+        # while the motors are still holding.
+        body += park
         body += load_template(self.end_tail_template_name)
         return f"{self.preset_header(temp)}\n{body}"
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from importlib import resources
 from typing import Mapping, Sequence
 
+from ..core.parking import SlicerPark
 from ..core.parts import PartBounds
 from ..core.push_plan import PushLine
 from ..core.structure import GcodeStructure
@@ -42,6 +43,9 @@ class MachineCode:
 
     start_code: str
     end_code: str
+    #: The end code for the last loop, when it differs - the head parks there.
+    #: ``None`` leaves every loop ending the same way.
+    final_end_code: str | None = None
     #: Notes for the user - e.g. that a profile fell back to the templates.
     warnings: tuple[str, ...] = field(default=())
 
@@ -62,6 +66,9 @@ class EndCodeContext:
     #: The separate parts on the plate, in report order.  Empty when the body
     #: could not be measured, which sends the push-off back to its one-line form.
     parts: tuple[PartBounds, ...] = ()
+    #: Where an ordinary print of this plate would leave the head, read out of
+    #: the slicer's own end code.  ``None`` when that file is shaped otherwise.
+    slicer_park: SlicerPark | None = None
     #: Side of the bed the model sits on: ``left`` / ``center`` / ``right``.
     direction: str = "center"
 
@@ -129,6 +136,15 @@ class PrinterProfile(ABC):
     def end_code(self, context: EndCodeContext) -> str:
         """Cool-down and push-off sequence appended after every loop."""
 
+    def final_end_code(self, context: EndCodeContext) -> str | None:
+        """The end code for the last loop, when this profile ends it differently.
+
+        ``None`` - the default - leaves every loop ending the same way.  A
+        profile that parks the head once the job is done returns that version
+        here instead of putting the park after every copy.
+        """
+        return None
+
     def end_code_warnings(self, context: EndCodeContext) -> tuple[str, ...]:
         """Notes the end-code generator produced - e.g. auto-adjusted push lanes."""
         return ()
@@ -172,6 +188,7 @@ class PrinterProfile(ABC):
         return MachineCode(
             start_code=render_start_code(self.start_code(), values),
             end_code=self.end_code(context),
+            final_end_code=self.final_end_code(context),
             warnings=(f"{self.name} has no in-place machine G-code yet; using the Factorian templates",)
             + self.end_code_warnings(context),
         )

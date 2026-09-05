@@ -26,7 +26,7 @@ from pylooprint.printers import get_profile
 from pylooprint.printers.bedslinger import PUSH_PLAN_START
 from pylooprint.settings import LoopSettings
 
-from conftest import INPLACE_TEMP, without_push_block, without_release_hold
+from conftest import INPLACE_TEMP, without_final_park, without_push_block, without_release_hold
 
 _EXECUTABLE_END = "; EXECUTABLE_BLOCK_END"
 #: The loop assembler appends this after the start code; the reference file,
@@ -71,15 +71,18 @@ def test_printer_and_model_are_detected(golden_project):
 def test_machine_end_code_matches_the_reference(golden_project, inplace_reference):
     """The cool-down and the sweep are the reference file's, byte for byte.
 
-    Two blocks are cut out of both sides first: the hold with its push-off beep,
-    and the push itself, which is now planned from the parts on the plate rather
-    than fixed.  ``test_release_hold.py`` and ``test_push_plan.py`` pin those.
+    Three blocks are cut out of both sides first, each pinned by its own tests:
+    the hold with its push-off beep, the push - planned from the parts on the
+    plate rather than fixed - and the park that ends the last loop.
     """
     produced = _machine_end_code(_build(golden_project).gcode)
     expected = _machine_end_code(inplace_reference)
-    assert without_push_block(without_release_hold(produced)) == without_push_block(
-        without_release_hold(expected)
-    )
+    assert _comparable(produced) == _comparable(expected)
+
+
+def _comparable(end_code: str) -> str:
+    """The end code without the blocks that other tests pin."""
+    return without_final_park(without_push_block(without_release_hold(end_code)))
 
 
 def test_machine_start_code_matches_the_reference(golden_project, inplace_reference):

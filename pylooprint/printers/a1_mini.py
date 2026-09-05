@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping, Sequence
 
+from ..core.parking import LIFT_AFTER, PARK_BEFORE, lift_moves
 from ..core.patching import LineRangePatch, apply_patches, replace_between
 from ..core.placement import extrusion_enters_zone, measure_extrusion_bounds
 from ..core.structure import GcodeStructure
@@ -14,9 +15,11 @@ from .bedslinger import ALIGN_FEED_SLOW, BedSlingerProfile
 
 #: Unique lines in the slicer's own end code that bracket the part it replaces.
 #: Everything the slicer does before this (timelapse, filament unload, hotend
-#: off) is kept; everything after it is the reset/finish-sound tail.
-_END_SPLICE_AFTER = "M17 Z0.4 ; lower z motor current to reduce impact if there is something in the bottom"
-_END_SPLICE_BEFORE = "M220 S100  ; Reset feedrate magnitude"
+#: off) is kept; everything after it is the reset/finish-sound tail.  The same
+#: two lines bracket the lift and the park that :mod:`pylooprint.core.parking`
+#: reads back out, so they are named there.
+_END_SPLICE_AFTER = LIFT_AFTER
+_END_SPLICE_BEFORE = PARK_BEFORE
 
 #: Height the toolhead parks at while the bed cools.  Deliberately above the
 #: 180 mm printable height: the gantry is driven up against the mechanical
@@ -133,9 +136,15 @@ class A1MiniProfile(BedSlingerProfile):
         purge lines and the tail of the end code are rewritten.
         """
         start_code = apply_patches(structure.slicer_start_code, self.start_code_patches())
+        park = self.final_park(context)
         return MachineCode(
             start_code=apply_speed_mode(start_code),
             end_code=self.patch_slicer_end_code(structure.slicer_end_code, context),
+            final_end_code=(
+                self.patch_slicer_end_code(structure.slicer_end_code, context, park=park)
+                if park
+                else None
+            ),
         )
 
     def start_code_patches(self) -> Sequence[LineRangePatch]:
@@ -169,12 +178,16 @@ class A1MiniProfile(BedSlingerProfile):
             ),
         )
 
-    def patch_slicer_end_code(self, end_code: str, context: EndCodeContext) -> str:
+    def patch_slicer_end_code(
+        self, end_code: str, context: EndCodeContext, park: str = ""
+    ) -> str:
         """Cool down, push the part off and sweep, inside the slicer's end code.
 
         The slicer's own Z-lift is carried over (de-indented, since the ``{if}``
         block it came from is gone) and the eject sequence takes the place of
-        the moves that would otherwise just park the head and finish.
+        the moves that would otherwise just park the head and finish.  ``park``
+        puts those parking moves back at the end, which is what the last loop
+        does once its copy is off the plate.
         """
         head = (
             load_template("end_a1_mini_inplace_head.gcode")
@@ -186,22 +199,11 @@ class A1MiniProfile(BedSlingerProfile):
         sweep = self.wiggle_sweep()
 
         def build(replaced: str) -> str:
-            lift = "\n".join(move.strip() for move in _lift_moves(replaced))
+            lift = lift_moves(_END_SPLICE_AFTER + replaced)
             return (
                 f"\n\n{lift}\n\n{head}{push}\n{sweep}"
                 ";====== Safety clear complete =======\nM17 R ; restore z current\n"
+                f"{park}"
             )
 
         return replace_between(end_code, _END_SPLICE_AFTER, _END_SPLICE_BEFORE, build)
-
-
-def _lift_moves(replaced: str) -> list[str]:
-    """The ``G1 Z...`` moves the slicer emitted to lift clear of the print."""
-    moves = []
-    for line in replaced.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("G1 Z"):
-            moves.append(line)
-        elif moves and stripped:
-            break
-    return moves
