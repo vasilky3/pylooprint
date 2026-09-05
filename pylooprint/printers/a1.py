@@ -17,6 +17,9 @@ class A1Profile(BedSlingerProfile):
     push_height_factor = 0.7
     push_min_model_height = 6.0
     push_min_z = 0.2
+    #: Same toolhead shape as the A1 Mini - see ``a1_mini.BLADE_WIDTH``.
+    blade_width = 55.0
+    blade_overlap = 0.5
 
     y_forward = 262
     wiggle_x_left = -48

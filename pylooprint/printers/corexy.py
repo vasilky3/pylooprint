@@ -36,6 +36,12 @@ class PushLanes:
 class CoreXyProfile(PrinterProfile):
     """Common behaviour of the X-axis multi-lane push printers."""
 
+    #: Declared for every machine, but nothing here reads them yet: these
+    #: printers still push through the plate centre in three fixed lanes rather
+    #: than following the parts.  See :func:`~pylooprint.core.push_plan`.
+    blade_width = 55.0
+    blade_overlap = 0.5
+
     # -- push lanes --------------------------------------------------------
     def push_lanes(self, context: EndCodeContext) -> PushLanes:
         """Lane positions for the detected model, or the fixed fallback."""

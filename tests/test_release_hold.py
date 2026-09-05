@@ -25,7 +25,7 @@ A1_MINI = get_profile("a1mini")
 
 
 def _end_code(key: str = "a1mini", **overrides) -> str:
-    settings = LoopSettings(loops=1, cooldown_temp=23, **overrides)
+    settings = LoopSettings(loops=1, cooldown_temp=26, **overrides)
     return get_profile(key).end_code(EndCodeContext(settings=settings))
 
 

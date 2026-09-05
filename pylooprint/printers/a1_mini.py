@@ -35,6 +35,12 @@ PUSH_MIN_MODEL_HEIGHT = 6.0
 #: the way down and shoves the part along the plate instead of tipping it over.
 PUSH_MIN_Z = 0.2
 
+#: Width of the toolhead that does the pushing, in mm, and how much of it has to
+#: sit over a part to carry it off.  55 * 0.5 = 27.5 mm is how far a part may
+#: stand from a push line and still be swept off by it.
+BLADE_WIDTH = 55.0
+BLADE_OVERLAP = 0.5
+
 #: Plate area the toolhead body covers while it parks at X-13 / Y180 and then
 #: descends to the push height - PUSH_HEIGHT_FACTOR of the model height, or
 #: PUSH_MIN_Z for a short part.  The nozzle itself clears the plate at X-13, but
@@ -63,6 +69,8 @@ class A1MiniProfile(BedSlingerProfile):
     push_height_factor = PUSH_HEIGHT_FACTOR
     push_min_model_height = PUSH_MIN_MODEL_HEIGHT
     push_min_z = PUSH_MIN_Z
+    blade_width = BLADE_WIDTH
+    blade_overlap = BLADE_OVERLAP
 
     y_forward = 180
     wiggle_x_left = -13
@@ -174,7 +182,7 @@ class A1MiniProfile(BedSlingerProfile):
             .replace("@M190@", self.cooldown_block(context.settings.cooldown_temp))
             .replace("@HOLD@", self.release_hold(context.settings))
         )
-        push = self.push_gcode(align_feed=ALIGN_FEED_SLOW)
+        push = self.push_gcode(context, align_feed=ALIGN_FEED_SLOW)
         sweep = self.wiggle_sweep()
 
         def build(replaced: str) -> str:

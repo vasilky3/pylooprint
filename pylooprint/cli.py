@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Sequence
 
 from . import __version__
+from .core.jsnum import to_fixed
+from .core.parts import PartBounds
 from .core.project import ThreeMfProject
 from .errors import LooprintError
 from .pipeline import BuildResult, build_loops, detect_printer
@@ -24,6 +27,9 @@ from .settings import (
     MIN_TEMP,
     LoopSettings,
 )
+
+#: How many part hitboxes the report spells out before summarising the rest.
+MAX_PARTS_LISTED = 20
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -118,12 +124,59 @@ def _default_output(source: Path, loops: int) -> Path:
     return source.with_name(f"{stem}_looped_{loops}x.gcode.3mf")
 
 
+def _report_parts(parts: Sequence[PartBounds]) -> None:
+    """The separate parts on the plate, one hitbox per line.
+
+    ``Z`` is the top the part reaches; the size in brackets is its footprint on
+    the plate.  A plate of many small parts would bury the rest of the report,
+    so only the first :data:`MAX_PARTS_LISTED` are spelled out.
+    """
+    print(f"parts       : {len(parts)}")
+    for index, part in enumerate(parts[:MAX_PARTS_LISTED], start=1):
+        print(
+            f"  part {index:<5}: X {part.min_x:.1f}..{part.max_x:.1f}  "
+            f"Y {part.min_y:.1f}..{part.max_y:.1f}  top Z {part.max_z:.2f}  "
+            f"({part.width:.1f} x {part.depth:.1f} mm)"
+        )
+    if len(parts) > MAX_PARTS_LISTED:
+        print(f"  ... and {len(parts) - MAX_PARTS_LISTED} more")
+
+
+def _report_push_plan(result: BuildResult) -> None:
+    """Where the blade comes down, and how far, for each pass it makes.
+
+    Nothing to say for a printer whose push-off does not follow the parts.
+    """
+    lines = result.push_lines
+    if not lines:
+        return
+
+    profile = result.profile
+    reach = profile.blade_width * profile.blade_overlap
+    print(
+        f"push plan   : {len(lines)} line(s), left to right "
+        f"(blade {profile.blade_width:.0f} mm, reach {reach:.1f} mm)"
+    )
+    for index, line in enumerate(lines[:MAX_PARTS_LISTED], start=1):
+        pushed = ", ".join(str(number) for number in line.parts)
+        # to_fixed, not format(): the G-code is written with it, and the report
+        # has to name the same numbers the printer will be given.
+        print(
+            f"  line {index:<5}: X {to_fixed(line.x, 2)}  Z {to_fixed(line.z, 2)}  "
+            f"(part{'s' if len(line.parts) > 1 else ''} {pushed})"
+        )
+    if len(lines) > MAX_PARTS_LISTED:
+        print(f"  ... and {len(lines) - MAX_PARTS_LISTED} more")
+
+
 def _report(args: argparse.Namespace, result: BuildResult, destination: Path) -> None:
     print(f"printer     : {result.profile.name}")
     print(f"loops       : {args.loops}")
     print(f"model height: {result.max_layer_z:.2f} mm" + ("" if result.max_layer_z_from_header else " (fallback)"))
     if result.placement:
         print(f"placement   : {result.placement.direction} (X {result.placement.min_x:.1f}..{result.placement.max_x:.1f})")
+    _report_parts(result.parts)
+    _report_push_plan(result)
     print(f"cool-down   : {args.temp} C -> commanded {result.profile.apply_temp_offset(args.temp)} C")
     wait = f"{args.hold} s, then the push-off beep" if args.hold else "no wait, push-off beep only"
     print(f"hold        : {wait}")

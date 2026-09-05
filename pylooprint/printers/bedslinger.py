@@ -10,6 +10,11 @@ directions would drive the gantry into the print.
 
 from __future__ import annotations
 
+from typing import Sequence
+
+from ..core.jsnum import to_fixed
+from ..core.parts import PartBounds
+from ..core.push_plan import PushLine, plan_push_lines
 from ..settings import LoopSettings
 from .base import EndCodeContext, PrinterProfile, load_template
 
@@ -25,6 +30,10 @@ ALIGN_FEED_SLOW = 300
 #: Markers bracketing the block, so it can be located in a finished file.
 HOLD_START = ";======= LOOPRINT RELEASE HOLD ======="
 HOLD_END = ";======= END LOOPRINT RELEASE HOLD ======="
+
+#: The same, for the run of push lines.
+PUSH_PLAN_START = ";======= LOOPRINT PUSH PLAN ======="
+PUSH_PLAN_END = ";======= END LOOPRINT PUSH PLAN ======="
 
 
 class BedSlingerProfile(PrinterProfile):
@@ -51,8 +60,76 @@ class BedSlingerProfile(PrinterProfile):
         """The bed sensor reads ~4 degrees high, and 15 C is the floor."""
         return max(15, temp + self.temp_offset)
 
-    def push_gcode(self, align_feed: int = ALIGN_FEED_RAPID) -> str:
-        """Align the nozzle with the model centre, drop Z, drive the bed forward."""
+    def push_plan(self, parts: Sequence[PartBounds]) -> list[PushLine]:
+        """One line per part, or per group of parts sharing an X band."""
+        return plan_push_lines(
+            parts,
+            blade_width=self.blade_width,
+            overlap=self.blade_overlap,
+            height_factor=self.push_height_factor,
+            min_model_height=self.push_min_model_height,
+            min_z=self.push_min_z,
+        )
+
+    def push_gcode(
+        self, context: EndCodeContext | None = None, align_feed: int = ALIGN_FEED_RAPID
+    ) -> str:
+        """Run the blade down every push line, left to right.
+
+        Falls back to the single line through the plate centre when the parts
+        are unknown - a body with nothing measurable in it still has to be
+        ejected, and the slicer's own centre is the best guess left.
+        """
+        lines = self.push_plan(context.parts) if context is not None else []
+        if not lines:
+            return self._single_push_gcode(align_feed)
+
+        blocks = [self._push_plan_header(lines)]
+        blocks += [
+            self._push_line_gcode(line, index, len(lines), align_feed)
+            for index, line in enumerate(lines, start=1)
+        ]
+        blocks.append(
+            "G1 Z1 F600\t\t;move nozzle closer to the bed for the sweep\n"
+            f"{PUSH_PLAN_END}\n"
+        )
+        return "\n".join(blocks)
+
+    def _push_plan_header(self, lines: Sequence[PushLine]) -> str:
+        """What the plan is, spelled out where the operator will read it."""
+        reach = self.blade_width * self.blade_overlap
+        header = [
+            PUSH_PLAN_START,
+            f"; {len(lines)} line(s), left to right.  Blade {_format_number(self.blade_width)} mm"
+            f" x {_format_number(self.blade_overlap)} overlap = {to_fixed(reach, 2)} mm reach:"
+            " a part is pushed by the line nearest its centre, within that.",
+        ]
+        for index, line in enumerate(lines, start=1):
+            header.append(
+                f"; line {index}: X {to_fixed(line.x, 2)}  Z {to_fixed(line.z, 2)}"
+                f"  {_part_list(line)}"
+            )
+        header.append("M220 S100 ; Reset to standard speed for safe push-off")
+        return "\n".join(header) + "\n"
+
+    def _push_line_gcode(
+        self, line: PushLine, index: int, total: int, align_feed: int
+    ) -> str:
+        return (
+            load_template("a1_push_line.gcode")
+            .replace("@INDEX@", str(index))
+            .replace("@TOTAL@", str(total))
+            .replace("@PART_LIST@", _part_list(line))
+            .replace("@SAFE_Z@", to_fixed(line.safe_z, 2))
+            .replace("@X@", to_fixed(line.x, 2))
+            .replace("@Z@", to_fixed(line.z, 2))
+            .replace("@ALIGN_FEED@", str(align_feed))
+            .replace("@PUSH_FACTOR@", _format_number(self.push_height_factor))
+            .replace("@Y_FORWARD@", _format_number(self.y_forward))
+        )
+
+    def _single_push_gcode(self, align_feed: int) -> str:
+        """The one-line push: plate centre, one height, one pass."""
         template = load_template("a1_push.gcode")
         return (
             template.replace("@Y_FORWARD@", _format_number(self.y_forward))
@@ -104,7 +181,7 @@ class BedSlingerProfile(PrinterProfile):
             load_template(self.end_head_template_name)
             .replace("@M190@", self.cooldown_block(temp))
             .replace("@HOLD@", self.release_hold(context.settings))
-            .replace("@PUSH@", self.push_gcode())
+            .replace("@PUSH@", self.push_gcode(context))
         )
         body += "\n" + self.wiggle_sweep()
         body += load_template(self.end_tail_template_name)
@@ -117,6 +194,12 @@ class BedSlingerProfile(PrinterProfile):
     # End-code template file names, supplied by the concrete profiles.
     end_head_template_name: str
     end_tail_template_name: str
+
+
+def _part_list(line: PushLine) -> str:
+    """``part 3`` / ``parts 1, 2`` - the numbers the parts report uses."""
+    label = "part" if len(line.parts) == 1 else "parts"
+    return f"{label} {', '.join(str(number) for number in line.parts)}"
 
 
 def _format_number(value: float) -> str:

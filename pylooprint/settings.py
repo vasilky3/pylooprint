@@ -18,7 +18,7 @@ DEFAULT_LOOPS = 1
 
 MIN_TEMP = 15
 MAX_TEMP = 90
-DEFAULT_TEMP = 23
+DEFAULT_TEMP = 26
 COOLDOWN_WARNING_THRESHOLD = 35
 
 #: How long to sit at the park height once the bed has reached its target, before
