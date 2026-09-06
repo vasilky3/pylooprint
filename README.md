@@ -56,6 +56,13 @@ looping:
   moves the machine: the toolhead has to stay parked at Z184, which is what keeps
   a limit-switch fan mod running for the whole hold, and the bed has to stay
   where the eject keep-out zone below was measured for.
+* **The last copy ends parked where an ordinary print parks** (A1 / A1 Mini).
+  The slicer's own lift and park moves are read out of the file the plate came
+  in — `G1 X-13 Y180` on the A1 Mini, with a Z that follows the part (its height
+  plus 100 mm, capped at the machine's ceiling) — and replayed once the last part
+  is off the plate, lift first, since the sweep leaves the nozzle a millimetre
+  above it. The copies before the last one do not bother: the next one starts by
+  homing anyway.
 * **Every printer beeps right before it pushes** — one short `M1006` tone, the
   same macro the slicer's finish sound uses. The machine has been standing still
   through the cool-down, so the beep is the only warning that it is about to move
@@ -268,6 +275,9 @@ The suite is anchored on two real reference files:
   plates in `tests/test gcode/`: a full-plate cube that must be refused, a cube
   shifted clear of the corner, and the plate whose bounding box covers the corner
   while its material stays clear of it.
+* **`test_parking.py`** — the final park: read off the slicer's own end code,
+  emitted in the last loop only, lift before the relative drop, and after the
+  sweep but before the motors are switched off.
 * **`test_push_plan.py`** — the push planner: which parts share a line, that a
   line comes down to the shortest part it pushes, that the lines run left to
   right, and that the blade lifts clear before the bed comes back.

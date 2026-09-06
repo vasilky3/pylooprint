@@ -9,6 +9,9 @@ Each loop is::
     M220 S100
     <the print>
     <patched slicer end code: cool down + push off>
+
+The last loop may end differently: that is where the head is parked, since the
+job is over once it has run.
 """
 
 from __future__ import annotations
@@ -32,6 +35,9 @@ class LoopPlan:
     end_code: str
     loops: int
     source_name: str
+    #: End code for the last loop, when it differs - that is the one that parks
+    #: the head, since the job is over once it has run.
+    final_end_code: str | None = None
     generated_at: datetime | None = None
 
 
@@ -73,7 +79,8 @@ def _one_loop(plan: LoopPlan, index: int) -> list[str]:
 
     parts += [structure.setup, "\n", plan.start_code, "\n"]
     parts += ["M220 S100 ; Set speed mode\n", structure.print_body, "\n"]
-    parts += [plan.end_code, "\n"]
+    last = index == plan.loops and plan.final_end_code is not None
+    parts += [plan.final_end_code if last else plan.end_code, "\n"]
     return parts
 
 

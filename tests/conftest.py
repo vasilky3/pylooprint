@@ -193,6 +193,21 @@ _PUSH_SECTIONS = (
 )
 
 
+def without_final_park(code: str) -> str:
+    """Cut the final park out, if this end code is the one that carries it.
+
+    Only the last loop parks the head, and the reference files predate the park
+    entirely; ``test_parking.py`` pins it instead.
+    """
+    start_marker = ";======= LOOPRINT FINAL PARK ======="
+    end_marker = ";======= END LOOPRINT FINAL PARK ======="
+    if start_marker not in code:
+        return code
+    start = code.index(start_marker)
+    end = code.index(end_marker) + len(end_marker)
+    return code[:start].rstrip("\n") + "\n" + code[end:].lstrip("\n")
+
+
 def without_push_block(code: str) -> str:
     """Cut the push-off out, so a comparison cannot depend on its contents.
 
