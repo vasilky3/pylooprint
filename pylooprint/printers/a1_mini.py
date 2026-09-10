@@ -38,11 +38,16 @@ PUSH_MIN_MODEL_HEIGHT = 6.0
 #: the way down and shoves the part along the plate instead of tipping it over.
 PUSH_MIN_Z = 0.2
 
+#: How far in front of the nozzle the bumper that touches the part sits, in mm.
+#: The bed has to stop that much earlier in its travel than the nozzle's own
+#: position would suggest, or the bumper is already into the part.
+ZPUSH_BUMPER_POSITION_MM = 30
+
 #: Width of the toolhead that does the pushing, in mm, and how much of it has to
 #: sit over a part to carry it off.  55 * 0.5 = 27.5 mm is how far a part may
 #: stand from a push line and still be swept off by it.
-BLADE_WIDTH = 55.0
-BLADE_OVERLAP = 0.5
+BLADE_WIDTH = 50.0
+BLADE_OVERLAP = 0.25
 
 #: Plate area the toolhead body covers while it parks at X-13 / Y180 and then
 #: descends to the push height - PUSH_HEIGHT_FACTOR of the model height, or
@@ -74,6 +79,7 @@ class A1MiniProfile(BedSlingerProfile):
     push_min_z = PUSH_MIN_Z
     blade_width = BLADE_WIDTH
     blade_overlap = BLADE_OVERLAP
+    zpush_bumper_position = ZPUSH_BUMPER_POSITION_MM
 
     y_forward = 180
     wiggle_x_left = -13

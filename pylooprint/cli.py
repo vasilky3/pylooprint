@@ -178,7 +178,13 @@ def _report_push_plan(result: BuildResult, zpush: bool) -> None:
         pushed = ", ".join(str(number) for number in line.parts)
         # The contact Y is what decides where the cycles start, so it is worth
         # seeing - and only the z-push measures it off the G-code.
-        contact = f"contact Y {to_fixed(line.contact_y, 2)}  " if zpush else ""
+        contact = ""
+        if zpush:
+            contact = (
+                f"contact Y {to_fixed(line.contact_y, 2)}  "
+                if line.contact_y is not None
+                else "no contact found  "
+            )
         # to_fixed, not format(): the G-code is written with it, and the report
         # has to name the same numbers the printer will be given.
         print(

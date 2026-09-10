@@ -7,6 +7,17 @@ import zipfile
 import pytest
 
 from pylooprint.cli import main
+from pylooprint.core.jsnum import to_fixed
+from pylooprint.core.parts import find_parts
+from pylooprint.core.project import ThreeMfProject
+from pylooprint.core.structure import split_gcode
+from pylooprint.pipeline import detect_printer
+from pylooprint.printers.bedslinger import (
+    ZPUSH_APPROACH_MM,
+    ZPUSH_CYCLES,
+    ZPUSH_PRESS_MM,
+    ZPUSH_SWIPE_MM,
+)
 
 
 def test_refuses_an_already_looped_file(result_3mf, capsys, tmp_path):
@@ -45,23 +56,42 @@ def test_reports_the_parts_on_the_plate(suitable_project, tmp_path, capsys):
 
 
 def test_reports_the_planned_push_lines(cone_multi_project, tmp_path, capsys):
-    """Four cones, two of them touching: three parts swept off in two passes."""
+    """Four cones, two of them touching: three parts, and a line for each group.
+
+    The figures themselves are the machine's tuning, so they are read back from
+    the planner rather than written out here - what this pins is that the report
+    names the same push the G-code will run.
+    """
     main([str(cone_multi_project), "--dry-run", "-o", str(tmp_path / "x.3mf")])
+
+    project = ThreeMfProject.open(cone_multi_project)
+    profile = detect_printer(project)
+    lines = profile.push_plan(find_parts(split_gcode(project.gcode).print_body))
 
     out = capsys.readouterr().out
     assert "parts       : 3" in out
-    assert "push plan   : 2 line(s), left to right (blade 55 mm, reach 27.5 mm)" in out
-    assert "  line 1    : X 71.62  Z 38.08  (parts 1, 2)" in out
-    assert "  line 2    : X 145.99  Z 23.38  (part 3)" in out
+    assert f"push plan   : {len(lines)} line(s), left to right" in out
+    for index, line in enumerate(lines, start=1):
+        pushed = ", ".join(str(number) for number in line.parts)
+        label = "parts" if len(line.parts) > 1 else "part"
+        assert (
+            f"  line {index:<5}: X {to_fixed(line.x, 2)}  Z {to_fixed(line.z, 2)}  "
+            f"({label} {pushed})"
+        ) in out
 
 
 @pytest.mark.parametrize("flag", ["--zpush", "-zpush"])
 def test_the_zpush_mode_is_reported(cone_multi_project, tmp_path, capsys, flag):
     main([str(cone_multi_project), flag, "--dry-run", "-o", str(tmp_path / "x.3mf")])
 
-    assert "push mode   : z-push, 8 cycles (approach 2.0, press 2.0, swipe 1.0 mm)" in (
-        capsys.readouterr().out
-    )
+    out = capsys.readouterr().out
+    assert (
+        f"push mode   : z-push, {ZPUSH_CYCLES} cycles "
+        f"(approach {ZPUSH_APPROACH_MM:.1f}, press {ZPUSH_PRESS_MM:.1f}, "
+        f"swipe {ZPUSH_SWIPE_MM:.1f} mm)"
+    ) in out
+    # With the mode on, every line names the contact its cycles start from.
+    assert "contact Y" in out
 
 
 def test_without_the_flag_no_push_mode_is_reported(cone_multi_project, tmp_path, capsys):

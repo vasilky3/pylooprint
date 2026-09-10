@@ -40,9 +40,10 @@ looping:
   slicer's own reset and finish sound close the loop. The move onto a push line
   crawls at F300 rather than a rapid, so the toolhead cannot knock a tall part
   over.
-* **The push follows the parts** (A1 / A1 Mini). The toolhead is a blade 55 mm
-  wide, and half of it has to sit over a part to carry it off, so one pass
-  sweeps everything whose centre is within 27.5 mm of it. Parts are grouped into
+* **The push follows the parts** (A1 / A1 Mini). The toolhead is a blade of a
+  known width, and a set fraction of it has to sit over a part to carry it off,
+  so one pass sweeps everything whose centre is within `blade_width × overlap` of
+  it — 12.5 mm as the A1 Mini is tuned today. Parts are grouped into
   as few such passes as possible and pushed left to right, each pass coming down
   to 70% of the height of the *shortest* part it covers — the blade then touches
   every part of the group instead of passing over the low ones, which is what a
@@ -56,19 +57,25 @@ looping:
   bed comes back along the band just swept, at the same height, and the blade
   drops again only there. Every move retraces a path already proven clear.
 * **`--zpush` works each part loose first.** Parts release better with a Z
-  component than with a straight shove, so this mode stops 2 mm short of the
+  component than with a straight shove, so this mode stops just short of the
   first plastic the blade will meet — *measured in the G-code*, as the back edge
   of whatever stands inside the bumper's width (the same `blade_width × overlap`
   reach the grouping uses) at or above the height the blade pushes at, which is
-  not the back edge of the part's box: a cone at 70% of its height stands 18 mm
-  further in, and a neighbouring wall inside the band is met first whether this
-  line is aimed at it or not. Then it presses 2 mm in, swipes 1 mm forward *and*
-  1 mm up together —
-  scooping under the part — comes back in Y and down in Z, and repeats, biting
-  2 mm deeper each cycle. Eight cycles, then the ordinary push carries the
-  loosened part off. All four numbers are constants at the top of
-  `printers/bedslinger.py` (`ZPUSH_APPROACH_MM`, `ZPUSH_PRESS_MM`,
-  `ZPUSH_SWIPE_MM`, `ZPUSH_CYCLES`).
+  not the back edge of the part's box: a cone at 70% of its height stands tens of
+  millimetres further in, and a neighbouring wall inside the band is met first
+  whether this line is aimed at it or not. The bumper's own offset in front of
+  the nozzle (`ZPUSH_BUMPER_POSITION_MM`, 30 mm on the A1 Mini) is added on top,
+  since that face is what touches the part and the bed therefore has to stop that
+  much earlier in its travel. Then it presses in, swipes forward *and* up
+  together — scooping under the part — comes back in Y and down in Z, and
+  repeats, biting one press deeper each cycle; after the set number of cycles the
+  ordinary push carries the loosened part off. A line with nothing under its
+  bumper at that height has no contact to work from, so it pushes straight and
+  says so, in the report and in a warning — better than cycling through thin air
+  for the depth of the plate. The cycle's numbers are constants
+  at the top of `printers/bedslinger.py` (`ZPUSH_APPROACH_MM`, `ZPUSH_PRESS_MM`,
+  `ZPUSH_SWIPE_MM`, `ZPUSH_CYCLES`), and the bumper offset sits with the other
+  per-machine figures in the profile.
 * **A release hold sits between the cool-down and the push-off** (A1 / A1 Mini).
   Once the bed reaches its target the printer waits `--hold` seconds, so the part
   keeps shrinking off the plate before anything touches it. Nothing in that block
@@ -166,7 +173,8 @@ What genuinely differs per machine:
 | Bed sensor offset | −4 °C | −4 °C | none | none |
 | `M190` repeats | 45 | 50 | 30 | 30 |
 | Z-drop | 70% of height, Z0.2 under 6 mm | 70% of height, Z0.2 under 6 mm | top − 30 mm, Z1 under 31 mm | top − 30 mm, Z1 under 31 mm |
-| Blade / overlap | 55 mm × 0.5 | 55 mm × 0.5 | declared, unused | declared, unused |
+| Blade / overlap | 55 mm × 0.5 | 50 mm × 0.25 | declared, unused | declared, unused |
+| Bumper ahead of nozzle | not measured (0) | 30 mm | — | — |
 | Push lines | one per part or X band | one per part or X band | 3 fixed lanes | 3 fixed lanes |
 | Sweep | wiggle, 6 positions | wiggle, 4 positions | — | — |
 | Release hold | yes | yes | — | — |
@@ -236,9 +244,10 @@ parts       : 3
   part 1    : X 8.9..97.6  Y 10.5..77.5  top Z 54.40  (88.7 x 67.0 mm)
   part 2    : X 76.2..103.8  Y 76.2..103.8  top Z 76.40  (27.7 x 27.7 mm)
   part 3    : X 120.6..171.4  Y 9.6..60.4  top Z 33.40  (50.8 x 50.8 mm)
-push plan   : 2 line(s), left to right (blade 55 mm, reach 27.5 mm)
-  line 1    : X 71.62  Z 38.08  (parts 1, 2)
-  line 2    : X 145.99  Z 23.38  (part 3)
+push plan   : 3 line(s), left to right (blade 50 mm, reach 12.5 mm)
+  line 1    : X 53.24  Z 38.08  (part 1)
+  line 2    : X 90.00  Z 53.48  (part 2)
+  line 3    : X 145.99  Z 23.38  (part 3)
 ```
 
 Those X and Z values are the ones written into the G-code — the report and the

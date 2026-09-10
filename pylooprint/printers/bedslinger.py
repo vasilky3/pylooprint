@@ -28,13 +28,15 @@ PUSH_END_Y = -0.5
 PUSH_SPEED = 300
 
 # --- the press-and-swipe push (--zpush) ------------------------------------
+#: Distance from nozzle to front line of bumper.
+ZPUSH_BUMPER_POSITION_MM = 0.0
 #: Where the blade stops on its way to the part, short of touching it, in mm.
-ZPUSH_APPROACH_MM = 2.0
+ZPUSH_APPROACH_MM = 1.0
 #: How far it then presses in - which is also what each cycle advances by.
-ZPUSH_PRESS_MM = 2.0
+ZPUSH_PRESS_MM = 1.0
 #: The swipe: forward and up together, then back in Y and down in Z again.  This
 #: is the move that scoops under the part and breaks it off the plate.
-ZPUSH_SWIPE_MM = 1.0
+ZPUSH_SWIPE_MM = 2.0
 #: How many cycles run before the ordinary push carries the part away.
 ZPUSH_CYCLES = 8
 
@@ -76,6 +78,11 @@ class BedSlingerProfile(PrinterProfile):
     push_height_factor: float
     push_min_model_height: float
     push_min_z: float
+    #: How far in front of the nozzle the bumper's front face sits.  The bumper is
+    #: what touches the part, so contact comes that much earlier in the bed's
+    #: travel than the nozzle's own position says; a machine whose offset has not
+    #: been measured keeps 0 and behaves as before.
+    zpush_bumper_position: float = ZPUSH_BUMPER_POSITION_MM
 
     def apply_temp_offset(self, temp: int) -> int:
         """The bed sensor reads ~4 degrees high, and 15 C is the floor."""
@@ -99,7 +106,10 @@ class BedSlingerProfile(PrinterProfile):
         )
         if print_body:
             lines = measure_contact(
-                print_body, lines, reach=self.blade_width * self.blade_overlap
+                print_body,
+                lines,
+                reach=self.blade_width * self.blade_overlap,
+                bumper=self.zpush_bumper_position,
             )
         return lines
 
@@ -189,12 +199,21 @@ class BedSlingerProfile(PrinterProfile):
 
     def _push_moves(self, line: PushLine, *, zpush: bool) -> str:
         """How the bed drives the parts into the blade, once it is in place."""
+        if zpush and line.contact_y is not None:
+            return self._zpush_moves(line)
+
+        straight = (
+            f"G1 Y{_format_number(PUSH_END_Y)} F{PUSH_SPEED}"
+            "\t\t; push: the bed drives the parts into the blade, slowly"
+        )
         if not zpush:
-            return (
-                f"G1 Y{_format_number(PUSH_END_Y)} F{PUSH_SPEED}"
-                "\t\t; push: the bed drives the parts into the blade, slowly"
-            )
-        return self._zpush_moves(line)
+            return straight
+        # Cycling needs somewhere to cycle: with no contact to start from the
+        # blade would work the air for as long as the plate is deep.
+        return (
+            "; no plastic found under the bumper at this height - nothing to work"
+            " loose, so this line just pushes\n" + straight
+        )
 
     def _zpush_moves(self, line: PushLine) -> str:
         """Work the part loose with press-and-swipe cycles, then push it off.
@@ -204,6 +223,7 @@ class BedSlingerProfile(PrinterProfile):
         back in Y and down in Z, leaving the blade ``ZPUSH_PRESS_MM`` deeper than
         it started.  The plain push then carries the loosened part away.
         """
+        assert line.contact_y is not None  # the caller checks; this is for mypy
         start = min(line.contact_y + ZPUSH_APPROACH_MM, self.y_forward)
         moves = [
             f"G1 Y{to_fixed(start, 2)} F{PUSH_SPEED}"

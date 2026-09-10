@@ -37,10 +37,12 @@ class PushLine:
     x: float
     #: Z it rises to for the push, once it is standing on this line.
     z: float
-    #: Y at which the blade first meets plastic on this line.  Planned from the
-    #: parts' back edges - the bed carries them towards the nozzle from there -
-    #: and re-measured off the G-code by :func:`measure_contact` when it matters.
-    contact_y: float
+    #: Y the bed is at when the bumper first meets plastic on this line - a
+    #: commandable coordinate, so it carries the bumper's own offset in front of
+    #: the nozzle.  Only :func:`measure_contact` can know it, because only the
+    #: G-code can say what stands under the bumper at this height; ``None`` until
+    #: it has looked, and still ``None`` if it found nothing there.
+    contact_y: float | None
     #: Which parts this line pushes, numbered as the parts report numbers them.
     parts: tuple[int, ...]
 
@@ -58,6 +60,10 @@ def plan_push_lines(
 
     ``parts`` is the list the report numbers from 1; the order it arrives in is
     the order those numbers refer to, whatever order the lines come out in.
+
+    Where each line meets plastic is left to :func:`measure_contact`: a part's
+    box cannot answer it, and a guess made from one would be wrong by tens of
+    millimetres in either direction.
     """
     if not parts:
         return []
@@ -84,7 +90,7 @@ def plan_push_lines(
             PushLine(
                 x=(group[0][0] + group[-1][0]) / 2,
                 z=_push_height(shortest, height_factor, min_model_height, min_z),
-                contact_y=max(part.max_y for _, _, part in group),
+                contact_y=None,
                 parts=tuple(sorted(number for _, number, _ in group)),
             )
         )
@@ -92,7 +98,7 @@ def plan_push_lines(
 
 
 def measure_contact(
-    print_body: str, lines: Sequence[PushLine], *, reach: float
+    print_body: str, lines: Sequence[PushLine], *, reach: float, bumper: float = 0.0
 ) -> list[PushLine]:
     """Re-read each line's contact Y off the G-code, under the bumper.
 
@@ -106,8 +112,12 @@ def measure_contact(
 
     ``reach`` is the same ``blade_width * overlap`` the grouping uses, so the band
     that decides a contact and the band that decides a group cannot disagree.
+    ``bumper`` turns the Y of the plastic into the Y to command the bed to: the
+    face that touches it leads the nozzle by that much.
 
-    Every line keeps its planned value if nothing is found inside its band.
+    A line with nothing in its band is left at ``None``: there is no contact to
+    approach, and inventing one from the part's box would send the blade tens of
+    millimetres wide of the plastic.
     """
     if not lines:
         return []
@@ -126,7 +136,7 @@ def measure_contact(
                 found[index] = y
 
     return [
-        line if contact is None else replace(line, contact_y=contact)
+        line if contact is None else replace(line, contact_y=contact + bumper)
         for line, contact in zip(lines, found)
     ]
 

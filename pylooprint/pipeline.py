@@ -90,6 +90,19 @@ def build_loops(
     # it is not made to pay for that scan.
     push_lines = profile.push_plan(parts, structure.print_body if settings.zpush else "")
 
+    blind = [
+        number
+        for number, line in enumerate(push_lines, start=1)
+        if settings.zpush and line.contact_y is None
+    ]
+    if blind:
+        warnings.append(
+            "no plastic stands under the bumper at the push height on push "
+            f"{'lines' if len(blind) > 1 else 'line'} "
+            + ", ".join(str(number) for number in blind)
+            + ": nothing there to work loose, so those lines push straight instead"
+        )
+
     bed = profile.bed_bounds
     placement = determine_model_placement(gcode, bed.min_x, bed.max_x, bed.min_y, bed.max_y)
     values = extract_variable_values(gcode, structure.config, placement.as_bounds())

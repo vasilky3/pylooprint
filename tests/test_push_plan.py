@@ -94,13 +94,13 @@ def test_lines_run_left_to_right_whatever_order_the_parts_arrive_in():
     assert [line.parts for line in lines] == [(2,), (3,), (1,)]
 
 
-def test_the_contact_y_is_the_back_edge_of_the_parts_on_the_line():
-    """The bed carries a part towards the nozzle, so its far Y is met first."""
+def test_the_planner_does_not_guess_where_the_blade_meets_plastic():
+    """A box cannot answer that, so the field stays empty until it is measured."""
     near = PartBounds(30.0, 38.0, 10.0, 40.0, 0.2, 20.0)
     far = PartBounds(40.0, 48.0, 60.0, 95.0, 0.2, 20.0)
 
     (line,) = _plan(near, far)
-    assert line.contact_y == 95.0
+    assert line.contact_y is None
 
 
 def _line(*, x: float = 50.0, z: float = 10.0, contact_y: float = 200.0) -> PushLine:
@@ -113,50 +113,65 @@ def _wall(x: float, y: float, z: float, *, length: float = 4.0) -> str:
 
 
 def test_the_contact_is_measured_under_the_bumper():
-    """A line at X50 reaches 27.5 mm either side of itself, and no further."""
-    body = "\n".join([_wall(50, 120, 10), _wall(95, 160, 10)])
+    """A line reaches so far either side of itself, and no further."""
+    body = "\n".join([_wall(50, 120, 10), _wall(90, 160, 10)])
 
-    (line,) = measure_contact(body, [_line()], reach=REACH)
+    (line,) = measure_contact(body, [_line()], reach=20.0)
     assert line.contact_y == 120.0
 
 
-def test_a_narrower_overlap_narrows_the_band():
-    """The same number the grouping uses, so the two cannot disagree."""
-    body = _wall(65, 120, 10)
+def test_a_narrower_band_lets_go_of_what_it_no_longer_covers():
+    """The band is the grouping's own reach, so retuning moves both together."""
+    body = _wall(60, 120, 10)  # 10 mm from the line, before its own length
 
-    assert measure_contact(body, [_line()], reach=REACH)[0].contact_y == 120.0
-    assert measure_contact(body, [_line()], reach=REACH / 2)[0].contact_y == 200.0
+    assert measure_contact(body, [_line()], reach=20.0)[0].contact_y == 120.0
+    assert measure_contact(body, [_line()], reach=5.0)[0].contact_y == 200.0
 
 
 def test_material_below_the_blade_passes_underneath_it():
     """Which is what the push height is for; at the height itself it counts."""
-    assert measure_contact(_wall(50, 120, 9.9), [_line()], reach=REACH)[0].contact_y == 200.0
-    assert measure_contact(_wall(50, 120, 10.0), [_line()], reach=REACH)[0].contact_y == 120.0
+    assert measure_contact(_wall(50, 120, 9.9), [_line()], reach=20.0)[0].contact_y == 200.0
+    assert measure_contact(_wall(50, 120, 10.0), [_line()], reach=20.0)[0].contact_y == 120.0
 
 
 def test_a_diagonal_counts_only_where_it_crosses_the_band():
     """Its far end says nothing about what stands under the bumper."""
-    body = "G0 X70 Y100 Z10\nG1 X120 Y160 E1"
+    body = "G0 X20 Y100 Z10\nG1 X120 Y200 E1"
 
-    # The band ends at X77.5, a seventh of the way along: Y100 + 60 * 0.15.
-    (line,) = measure_contact(body, [_line()], reach=REACH)
-    assert line.contact_y == pytest.approx(109.0)
+    # A line at X50 with a 20 mm reach is left behind at X70, halfway along.
+    (line,) = measure_contact(body, [_line()], reach=20.0)
+    assert line.contact_y == pytest.approx(150.0)
 
 
 def test_a_neighbour_standing_in_the_band_is_what_the_blade_meets():
     """It is in the way whether or not this line is aimed at it."""
-    body = "\n".join([_wall(50, 100, 10), _wall(75, 140, 10)])
+    body = "\n".join([_wall(50, 100, 10), _wall(65, 140, 10)])
 
-    (line,) = measure_contact(body, [_line(contact_y=100.0)], reach=REACH)
+    (line,) = measure_contact(body, [_line(contact_y=100.0)], reach=20.0)
     assert line.contact_y == 140.0
 
 
 def test_an_empty_band_keeps_the_planned_contact():
     body = _wall(150, 170, 10)
 
-    (line,) = measure_contact(body, [_line(contact_y=88.0)], reach=REACH)
+    (line,) = measure_contact(body, [_line(contact_y=88.0)], reach=20.0)
     assert line.contact_y == 88.0
-    assert measure_contact(body, [], reach=REACH) == []
+    assert measure_contact(body, [], reach=20.0) == []
+
+
+def test_the_bumper_leads_the_nozzle_by_its_own_offset():
+    """The bumper touches the part first, so the bed stops that much earlier.
+
+    The contact is a coordinate to command, not a place on the plate, and that
+    holds whether it was planned off the boxes or measured off the G-code.
+    """
+    body = _wall(50, 120, 10)
+
+    (measured,) = measure_contact(body, [_line()], reach=20.0)
+    (shifted,) = measure_contact(body, [_line()], reach=20.0, bumper=30.0)
+
+    assert measured.contact_y == 120.0
+    assert shifted.contact_y - measured.contact_y == 30.0
 
 
 def test_the_body_is_only_measured_when_it_is_handed_over(cone_multi_project):
@@ -167,10 +182,15 @@ def test_the_body_is_only_measured_when_it_is_handed_over(cone_multi_project):
     planned = A1_MINI.push_plan(parts)
     measured = A1_MINI.push_plan(parts, body)
 
-    assert [to_fixed(line.contact_y, 2) for line in planned] == ["103.83", "60.42"]
-    # A cone is widest at its base, so at 70% of its height its material stands
-    # well short of the footprint's back edge.
-    assert [to_fixed(line.contact_y, 2) for line in measured] == ["96.95", "42.73"]
+    # Without the body there is no contact to report at all; with it, each line
+    # lands on the plastic that really stands under the bumper - which on a cone,
+    # widest at its base, is well inside the back edge of its box.
+    assert [line.contact_y for line in planned] == [None] * len(planned)
+    bumper = A1_MINI.zpush_bumper_position
+    for found in measured:
+        back_edge = max(parts[number - 1].max_y for number in found.parts)
+        assert found.contact_y is not None
+        assert found.contact_y < back_edge + bumper
 
 
 def test_a_plate_with_nothing_on_it_has_no_plan():
@@ -183,21 +203,28 @@ def test_corexy_printers_plan_no_lines():
     assert get_profile("p1").push_plan([_part(90, 20)]) == []
 
 
-def test_the_cone_plate_is_pushed_in_two_passes(cone_multi_project):
-    """Two of its four cones stand within one blade width of each other.
+def test_the_cone_plate_is_planned_by_the_machine_s_own_numbers(cone_multi_project):
+    """A real plate, checked against the rules rather than against fixed figures.
 
-    Parts 1 and 2 are centred 36.75 mm apart, inside the 55 mm a single line
-    spans, and part 1 is the shorter of them at 54.4 mm - so that line comes
-    down to 38.08, not to 76.4 * 0.7.
+    How many lines it takes depends on the blade and the overlap, which are
+    tuning; what must hold whatever they are is that every part is pushed by
+    exactly one line that can reach its centre, at the height of the shortest
+    part on it.
     """
     body = split_gcode(ThreeMfProject.open(cone_multi_project).gcode).print_body
-    lines = A1_MINI.push_plan(find_parts(body))
+    parts = find_parts(body)
+    lines = A1_MINI.push_plan(parts)
+    reach = A1_MINI.blade_width * A1_MINI.blade_overlap
 
-    assert len(lines) == 2
-    assert (lines[0].x, lines[0].z) == pytest.approx((71.62, 38.08), abs=0.01)
-    assert lines[0].parts == (1, 2)
-    assert (lines[1].x, lines[1].z) == pytest.approx((145.99, 23.38), abs=0.01)
-    assert lines[1].parts == (3,)
+    assert sorted(number for line in lines for number in line.parts) == [1, 2, 3]
+    for line in lines:
+        pushed = [parts[number - 1] for number in line.parts]
+        for part in pushed:
+            assert abs((part.min_x + part.max_x) / 2 - line.x) <= reach
+        assert line.z == pytest.approx(
+            min(part.max_z for part in pushed) * A1_MINI.push_height_factor
+        )
+    assert [line.x for line in lines] == sorted(line.x for line in lines)
 
 
 def test_the_end_code_runs_one_block_per_line():
