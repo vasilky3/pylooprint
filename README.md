@@ -57,7 +57,13 @@ looping:
   drops again only there. Every move retraces a path already proven clear.
 * **`--zpush` works each part loose first.** Parts release better with a Z
   component than with a straight shove, so this mode stops 2 mm short of the
-  part, then presses 2 mm in, swipes 1 mm forward *and* 1 mm up together —
+  first plastic the blade will meet — *measured in the G-code*, as the back edge
+  of whatever stands inside the bumper's width (the same `blade_width × overlap`
+  reach the grouping uses) at or above the height the blade pushes at, which is
+  not the back edge of the part's box: a cone at 70% of its height stands 18 mm
+  further in, and a neighbouring wall inside the band is met first whether this
+  line is aimed at it or not. Then it presses 2 mm in, swipes 1 mm forward *and*
+  1 mm up together —
   scooping under the part — comes back in Y and down in Z, and repeats, biting
   2 mm deeper each cycle. Eight cycles, then the ordinary push carries the
   loosened part off. All four numbers are constants at the top of
@@ -298,7 +304,10 @@ The suite is anchored on two real reference files:
   at a spot it has not already been to.
 * **`test_zpush.py`** — the press-and-swipe cycles: the four moves in order, the
   2 mm of advance per cycle, Z back where it started each time, the approach that
-  stops short of the part, and fewer cycles rather than moves past the plate edge.
+  stops short of the *measured* contact, and fewer cycles rather than moves past
+  the plate edge. The contact measurement itself — the bumper's band, the height
+  cut-off, a diagonal clipped to the band, a neighbour standing in the way — is in
+  `test_push_plan.py`.
 * **`test_parts.py`** — the part finder: parts standing close together, the skirt
   that loops around all of them, travel moves crossing the gaps, and the two
   in-repo plates, whose single part has to match the model's own bounding box.

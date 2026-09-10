@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import pytest
 
-from pylooprint.core.parts import PartBounds
+from pylooprint.core.parts import PartBounds, find_parts
+from pylooprint.core.project import ThreeMfProject
+from pylooprint.core.push_plan import PushLine
+from pylooprint.core.structure import split_gcode
+from pylooprint.pipeline import build_loops, detect_printer
 from pylooprint.printers import EndCodeContext, get_profile
 from pylooprint.printers.bedslinger import (
     PUSH_END_Y,
@@ -154,6 +158,53 @@ def test_every_line_of_a_multi_part_plate_is_worked_loose():
     assert len([line for line in moves if line.startswith("G1 Y92.00")]) == 1
     assert len([line for line in moves if line.startswith("G1 Y62.00")]) == 1
     assert len([line for line in moves if line.startswith("G1 Y-0.5")]) == 2
+
+
+def test_the_approach_uses_the_contact_the_pipeline_measured():
+    """The planned push is carried in the context, measurements and all."""
+    part = _part(50, 30, back_y=140.0)
+    measured = PushLine(x=50.0, z=21.0, contact_y=96.95, parts=(1,))
+    settings = LoopSettings(loops=1, cooldown_temp=23, zpush=True)
+
+    code = A1_MINI.end_code(
+        EndCodeContext(settings=settings, parts=(part,), push_lines=(measured,))
+    )
+
+    assert f"G1 Y{96.95 + ZPUSH_APPROACH_MM:.2f} F300" in code
+    assert "G1 Y142.00" not in code  # the part's own back edge, not the contact
+
+
+def test_the_cone_plate_approaches_the_material_not_the_footprint(cone_multi_project):
+    """Measured, its second line starts 18 mm further in than the box suggests."""
+    body = split_gcode(ThreeMfProject.open(cone_multi_project).gcode).print_body
+    lines = A1_MINI.push_plan(find_parts(body), body)
+    settings = LoopSettings(loops=1, cooldown_temp=23, zpush=True)
+
+    code = A1_MINI.end_code(
+        EndCodeContext(settings=settings, parts=tuple(find_parts(body)), push_lines=tuple(lines))
+    )
+
+    assert "G1 Y98.95 F300" in code  # 96.95 + 2, line 1
+    assert "G1 Y44.73 F300" in code  # 42.73 + 2, line 2
+    assert "G1 Y62.42 F300" not in code  # what the footprint would have given
+
+
+def test_only_the_zpush_build_measures_the_contact(cone_multi_project):
+    """The plain push works off the boxes, so it is not charged for the scan."""
+    project = ThreeMfProject.open(cone_multi_project)
+    profile = detect_printer(project)
+
+    def contacts(zpush: bool) -> list[str]:
+        result = build_loops(
+            project,
+            profile,
+            LoopSettings(loops=1, cooldown_temp=26, zpush=zpush),
+            source_name=cone_multi_project.name,
+        )
+        return [f"{line.contact_y:.2f}" for line in result.push_lines]
+
+    assert contacts(False) == ["103.83", "60.42"]
+    assert contacts(True) == ["96.95", "42.73"]
 
 
 def test_the_plan_header_says_what_the_cycles_will_do():

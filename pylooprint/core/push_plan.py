@@ -22,10 +22,11 @@ the positions do, and it belongs with the G-code: see
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Sequence
 
 from .parts import PartBounds
+from .placement import ExtrusionSegment, iter_extrusion_segments
 
 
 @dataclass(frozen=True)
@@ -36,8 +37,9 @@ class PushLine:
     x: float
     #: Z it rises to for the push, once it is standing on this line.
     z: float
-    #: Y at which the blade first meets the parts on this line - their back edge,
-    #: since the bed carries them towards the nozzle from there.
+    #: Y at which the blade first meets plastic on this line.  Planned from the
+    #: parts' back edges - the bed carries them towards the nozzle from there -
+    #: and re-measured off the G-code by :func:`measure_contact` when it matters.
     contact_y: float
     #: Which parts this line pushes, numbered as the parts report numbers them.
     parts: tuple[int, ...]
@@ -87,6 +89,65 @@ def plan_push_lines(
             )
         )
     return lines
+
+
+def measure_contact(
+    print_body: str, lines: Sequence[PushLine], *, reach: float
+) -> list[PushLine]:
+    """Re-read each line's contact Y off the G-code, under the bumper.
+
+    A part's hitbox answers a different question: it is the back edge of the whole
+    footprint, over the whole height.  What the blade meets is the back edge of
+    whatever stands *inside the width of the bumper* and *at or above the height
+    the blade is at* - which on a cone is far closer to the centre than the
+    footprint suggests, and on a crowded plate can belong to a neighbouring part
+    rather than to the one this line is aimed at.  Either way it is the plastic the
+    blade runs into, so it is where the approach has to stop.
+
+    ``reach`` is the same ``blade_width * overlap`` the grouping uses, so the band
+    that decides a contact and the band that decides a group cannot disagree.
+
+    Every line keeps its planned value if nothing is found inside its band.
+    """
+    if not lines:
+        return []
+
+    bands = [(line.x - reach, line.x + reach, line.z) for line in lines]
+    found: list[float | None] = [None] * len(lines)
+
+    for segment in iter_extrusion_segments(print_body):
+        for index, (low_x, high_x, push_z) in enumerate(bands):
+            # Anything lower than the blade passes underneath it; that is what the
+            # push height is for.
+            if segment.z < push_z:
+                continue
+            y = _max_y_inside(segment, low_x, high_x)
+            if y is not None and (found[index] is None or y > found[index]):
+                found[index] = y
+
+    return [
+        line if contact is None else replace(line, contact_y=contact)
+        for line, contact in zip(lines, found)
+    ]
+
+
+def _max_y_inside(segment: ExtrusionSegment, low_x: float, high_x: float) -> float | None:
+    """The furthest Y the part of this move inside the X band reaches.
+
+    Clipped rather than judged by its endpoints: a long diagonal can end well
+    outside the bumper, and its far end says nothing about what is under it.
+    """
+    span = segment.x1 - segment.x0
+    if span == 0:
+        return max(segment.y0, segment.y1) if low_x <= segment.x0 <= high_x else None
+
+    edges = sorted(((low_x - segment.x0) / span, (high_x - segment.x0) / span))
+    enter, leave = max(edges[0], 0.0), min(edges[1], 1.0)
+    if enter > leave:
+        return None
+
+    rise = segment.y1 - segment.y0
+    return max(segment.y0 + rise * enter, segment.y0 + rise * leave)
 
 
 def _centre(part: PartBounds) -> float:

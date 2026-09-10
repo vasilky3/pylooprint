@@ -66,6 +66,9 @@ class EndCodeContext:
     #: The separate parts on the plate, in report order.  Empty when the body
     #: could not be measured, which sends the push-off back to its one-line form.
     parts: tuple[PartBounds, ...] = ()
+    #: The push the pipeline planned from those parts - the same lines the report
+    #: names.  Empty sends a bed slinger back to planning its own.
+    push_lines: tuple[PushLine, ...] = ()
     #: Where an ordinary print of this plate would leave the head, read out of
     #: the slicer's own end code.  ``None`` when that file is shaped otherwise.
     slicer_park: SlicerPark | None = None
@@ -149,13 +152,17 @@ class PrinterProfile(ABC):
         """Notes the end-code generator produced - e.g. auto-adjusted push lanes."""
         return ()
 
-    def push_plan(self, parts: Sequence[PartBounds]) -> list[PushLine]:
+    def push_plan(self, parts: Sequence[PartBounds], print_body: str = "") -> list[PushLine]:
         """The lines the blade runs to sweep this plate, left to right.
 
         Empty for a profile whose push-off does not follow the parts - the
         CoreXY machines still push through the plate centre in three fixed
-        lanes.  The report and the G-code both read this, so neither can end up
-        describing a push the other does not make.
+        lanes.  Called once per build: the plan is reported and carried in the
+        context, so the report and the G-code cannot describe different pushes.
+
+        ``print_body`` lets a profile measure against the G-code itself rather
+        than against the parts' boxes; it is only handed over when something in
+        the plan needs that accuracy.
         """
         return []
 

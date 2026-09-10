@@ -14,7 +14,7 @@ from typing import Sequence
 
 from ..core.jsnum import to_fixed
 from ..core.parts import PartBounds
-from ..core.push_plan import PushLine, plan_push_lines
+from ..core.push_plan import PushLine, measure_contact, plan_push_lines
 from ..settings import LoopSettings
 from .base import EndCodeContext, PrinterProfile, load_template
 
@@ -81,9 +81,15 @@ class BedSlingerProfile(PrinterProfile):
         """The bed sensor reads ~4 degrees high, and 15 C is the floor."""
         return max(15, temp + self.temp_offset)
 
-    def push_plan(self, parts: Sequence[PartBounds]) -> list[PushLine]:
-        """One line per part, or per group of parts sharing an X band."""
-        return plan_push_lines(
+    def push_plan(self, parts: Sequence[PartBounds], print_body: str = "") -> list[PushLine]:
+        """One line per part, or per group of parts sharing an X band.
+
+        Given the print body, each line's contact Y is re-measured against the
+        G-code - the back edge of whatever stands under the bumper at the height
+        the blade pushes at, which is not the back edge of the part's box.  Only
+        the press-and-swipe push needs that, so only it pays for the scan.
+        """
+        lines = plan_push_lines(
             parts,
             blade_width=self.blade_width,
             overlap=self.blade_overlap,
@@ -91,6 +97,11 @@ class BedSlingerProfile(PrinterProfile):
             min_model_height=self.push_min_model_height,
             min_z=self.push_min_z,
         )
+        if print_body:
+            lines = measure_contact(
+                print_body, lines, reach=self.blade_width * self.blade_overlap
+            )
+        return lines
 
     def push_gcode(
         self, context: EndCodeContext | None = None, align_feed: int = ALIGN_FEED_RAPID
@@ -109,7 +120,7 @@ class BedSlingerProfile(PrinterProfile):
         are unknown - a body with nothing measurable in it still has to be
         ejected, and the slicer's own centre is the best guess left.
         """
-        lines = self.push_plan(context.parts) if context is not None else []
+        lines = self._lines(context)
         if not lines:
             return self._single_push_gcode(align_feed)
 
@@ -124,6 +135,17 @@ class BedSlingerProfile(PrinterProfile):
             f"{PUSH_PLAN_END}\n"
         )
         return "\n".join(blocks)
+
+    def _lines(self, context: EndCodeContext | None) -> Sequence[PushLine]:
+        """The push the pipeline planned, or one worked out from the parts.
+
+        The pipeline plans the push once so the report and the G-code name the
+        same moves; a profile asked for an end code on its own still plans its
+        own, which is what the tests and the template path do.
+        """
+        if context is None:
+            return []
+        return context.push_lines or self.push_plan(context.parts)
 
     def _push_plan_header(self, lines: Sequence[PushLine], *, zpush: bool) -> str:
         """What the plan is, spelled out where the operator will read it."""

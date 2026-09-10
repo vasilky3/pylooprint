@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import pytest
 
+from pylooprint.core.jsnum import to_fixed
 from pylooprint.core.parts import PartBounds, find_parts
 from pylooprint.core.project import ThreeMfProject
-from pylooprint.core.push_plan import plan_push_lines
+from pylooprint.core.push_plan import PushLine, measure_contact, plan_push_lines
 from pylooprint.core.structure import split_gcode
 from pylooprint.printers import EndCodeContext, get_profile
 from pylooprint.printers.a1_mini import BLADE_OVERLAP, BLADE_WIDTH, PUSH_MIN_Z
@@ -100,6 +101,76 @@ def test_the_contact_y_is_the_back_edge_of_the_parts_on_the_line():
 
     (line,) = _plan(near, far)
     assert line.contact_y == 95.0
+
+
+def _line(*, x: float = 50.0, z: float = 10.0, contact_y: float = 200.0) -> PushLine:
+    return PushLine(x=x, z=z, contact_y=contact_y, parts=(1,))
+
+
+def _wall(x: float, y: float, z: float, *, length: float = 4.0) -> str:
+    """A short extruding move, laid along X at one spot on the plate."""
+    return f"G0 X{x} Y{y} Z{z}\nG1 X{x + length} Y{y} E1"
+
+
+def test_the_contact_is_measured_under_the_bumper():
+    """A line at X50 reaches 27.5 mm either side of itself, and no further."""
+    body = "\n".join([_wall(50, 120, 10), _wall(95, 160, 10)])
+
+    (line,) = measure_contact(body, [_line()], reach=REACH)
+    assert line.contact_y == 120.0
+
+
+def test_a_narrower_overlap_narrows_the_band():
+    """The same number the grouping uses, so the two cannot disagree."""
+    body = _wall(65, 120, 10)
+
+    assert measure_contact(body, [_line()], reach=REACH)[0].contact_y == 120.0
+    assert measure_contact(body, [_line()], reach=REACH / 2)[0].contact_y == 200.0
+
+
+def test_material_below_the_blade_passes_underneath_it():
+    """Which is what the push height is for; at the height itself it counts."""
+    assert measure_contact(_wall(50, 120, 9.9), [_line()], reach=REACH)[0].contact_y == 200.0
+    assert measure_contact(_wall(50, 120, 10.0), [_line()], reach=REACH)[0].contact_y == 120.0
+
+
+def test_a_diagonal_counts_only_where_it_crosses_the_band():
+    """Its far end says nothing about what stands under the bumper."""
+    body = "G0 X70 Y100 Z10\nG1 X120 Y160 E1"
+
+    # The band ends at X77.5, a seventh of the way along: Y100 + 60 * 0.15.
+    (line,) = measure_contact(body, [_line()], reach=REACH)
+    assert line.contact_y == pytest.approx(109.0)
+
+
+def test_a_neighbour_standing_in_the_band_is_what_the_blade_meets():
+    """It is in the way whether or not this line is aimed at it."""
+    body = "\n".join([_wall(50, 100, 10), _wall(75, 140, 10)])
+
+    (line,) = measure_contact(body, [_line(contact_y=100.0)], reach=REACH)
+    assert line.contact_y == 140.0
+
+
+def test_an_empty_band_keeps_the_planned_contact():
+    body = _wall(150, 170, 10)
+
+    (line,) = measure_contact(body, [_line(contact_y=88.0)], reach=REACH)
+    assert line.contact_y == 88.0
+    assert measure_contact(body, [], reach=REACH) == []
+
+
+def test_the_body_is_only_measured_when_it_is_handed_over(cone_multi_project):
+    """The boxes answer well enough for the plain push, and cost nothing."""
+    body = split_gcode(ThreeMfProject.open(cone_multi_project).gcode).print_body
+    parts = find_parts(body)
+
+    planned = A1_MINI.push_plan(parts)
+    measured = A1_MINI.push_plan(parts, body)
+
+    assert [to_fixed(line.contact_y, 2) for line in planned] == ["103.83", "60.42"]
+    # A cone is widest at its base, so at 70% of its height its material stands
+    # well short of the footprint's back edge.
+    assert [to_fixed(line.contact_y, 2) for line in measured] == ["96.95", "42.73"]
 
 
 def test_a_plate_with_nothing_on_it_has_no_plan():

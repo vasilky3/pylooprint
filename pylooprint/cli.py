@@ -176,11 +176,14 @@ def _report_push_plan(result: BuildResult, zpush: bool) -> None:
     )
     for index, line in enumerate(lines[:MAX_PARTS_LISTED], start=1):
         pushed = ", ".join(str(number) for number in line.parts)
+        # The contact Y is what decides where the cycles start, so it is worth
+        # seeing - and only the z-push measures it off the G-code.
+        contact = f"contact Y {to_fixed(line.contact_y, 2)}  " if zpush else ""
         # to_fixed, not format(): the G-code is written with it, and the report
         # has to name the same numbers the printer will be given.
         print(
             f"  line {index:<5}: X {to_fixed(line.x, 2)}  Z {to_fixed(line.z, 2)}  "
-            f"(part{'s' if len(line.parts) > 1 else ''} {pushed})"
+            f"{contact}(part{'s' if len(line.parts) > 1 else ''} {pushed})"
         )
     if len(lines) > MAX_PARTS_LISTED:
         print(f"  ... and {len(lines) - MAX_PARTS_LISTED} more")
