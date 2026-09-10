@@ -10,11 +10,14 @@ Two numbers per machine decide the grouping: the width of the blade and how much
 of it has to sit over a part to carry it.  Their product is the *reach* of a
 line: a part is pushed by a line no further than ``reach`` from its centre.
 
-The height is the other half of the plan.  A line comes down to a share of the
-model height, and when it covers several parts that share is taken from the
-*shortest* of them - the blade then touches every part of the group, and the
-taller ones are simply struck lower down, which tips them over all the more
-readily.
+The height is the other half of the plan.  A line pushes at a share of the model
+height, and when it covers several parts that share is taken from the *shortest*
+of them - the blade then touches every part of the group, and the taller ones are
+simply struck lower down, which tips them over all the more readily.
+
+Nothing here says how the blade *gets* to a line.  That order matters as much as
+the positions do, and it belongs with the G-code: see
+:meth:`~pylooprint.printers.bedslinger.BedSlingerProfile.push_gcode`.
 """
 
 from __future__ import annotations
@@ -24,21 +27,18 @@ from typing import Sequence
 
 from .parts import PartBounds
 
-#: How far above the tallest part left on the plate the blade travels between
-#: lines, in mm.
-PUSH_CLEARANCE_MM = 2.0
-
 
 @dataclass(frozen=True)
 class PushLine:
-    """One pass of the blade: where it sits, how far it comes down."""
+    """One pass of the blade: where it stands, and how high it rises there."""
 
     #: X the blade is centred on.
     x: float
-    #: Z it drops to for the push.
+    #: Z it rises to for the push, once it is standing on this line.
     z: float
-    #: Z it travels at on its way here, clear of everything still on the plate.
-    safe_z: float
+    #: Y at which the blade first meets the parts on this line - their back edge,
+    #: since the bed carries them towards the nozzle from there.
+    contact_y: float
     #: Which parts this line pushes, numbered as the parts report numbers them.
     parts: tuple[int, ...]
 
@@ -51,7 +51,6 @@ def plan_push_lines(
     height_factor: float,
     min_model_height: float,
     min_z: float,
-    clearance: float = PUSH_CLEARANCE_MM,
 ) -> list[PushLine]:
     """The push lines for a plate, left to right.
 
@@ -77,16 +76,13 @@ def plan_push_lines(
             groups.append([entry])
 
     lines: list[PushLine] = []
-    for index, group in enumerate(groups):
-        # Everything from this group rightwards is still standing when this line
-        # runs; the blade has to travel above all of it.
-        remaining = [part for later in groups[index:] for _, _, part in later]
+    for group in groups:
         shortest = min(part.max_z for _, _, part in group)
         lines.append(
             PushLine(
                 x=(group[0][0] + group[-1][0]) / 2,
                 z=_push_height(shortest, height_factor, min_model_height, min_z),
-                safe_z=max(part.max_z for part in remaining) + clearance,
+                contact_y=max(part.max_y for _, _, part in group),
                 parts=tuple(sorted(number for _, number, _ in group)),
             )
         )

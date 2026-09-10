@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import zipfile
 
+import pytest
+
 from pylooprint.cli import main
 
 
@@ -51,6 +53,21 @@ def test_reports_the_planned_push_lines(cone_multi_project, tmp_path, capsys):
     assert "push plan   : 2 line(s), left to right (blade 55 mm, reach 27.5 mm)" in out
     assert "  line 1    : X 71.62  Z 38.08  (parts 1, 2)" in out
     assert "  line 2    : X 145.99  Z 23.38  (part 3)" in out
+
+
+@pytest.mark.parametrize("flag", ["--zpush", "-zpush"])
+def test_the_zpush_mode_is_reported(cone_multi_project, tmp_path, capsys, flag):
+    main([str(cone_multi_project), flag, "--dry-run", "-o", str(tmp_path / "x.3mf")])
+
+    assert "push mode   : z-push, 8 cycles (approach 2.0, press 2.0, swipe 1.0 mm)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_without_the_flag_no_push_mode_is_reported(cone_multi_project, tmp_path, capsys):
+    main([str(cone_multi_project), "--dry-run", "-o", str(tmp_path / "x.3mf")])
+
+    assert "push mode" not in capsys.readouterr().out
 
 
 def test_rejects_out_of_range_settings(result_3mf, capsys):

@@ -47,9 +47,22 @@ looping:
   to 70% of the height of the *shortest* part it covers — the blade then touches
   every part of the group instead of passing over the low ones, which is what a
   single pass at the plate's centre and the tallest part's height used to do.
-  Between passes the blade lifts above everything still standing before the bed
-  comes back for the next one. A plate whose body cannot be measured falls back
-  to that single central pass.
+  A plate whose body cannot be measured falls back to that single central pass.
+* **The blade only ever descends where it has already been.** Coming down at a
+  fresh spot means coming down blind onto whatever is under it, so instead it
+  drops to the travel height (Z0.2) while still in the corner, crosses the plate
+  at that height — where a part in the way is shoved aside rather than struck from
+  above — and only goes *up* once it is standing on its line. After the push the
+  bed comes back along the band just swept, at the same height, and the blade
+  drops again only there. Every move retraces a path already proven clear.
+* **`--zpush` works each part loose first.** Parts release better with a Z
+  component than with a straight shove, so this mode stops 2 mm short of the
+  part, then presses 2 mm in, swipes 1 mm forward *and* 1 mm up together —
+  scooping under the part — comes back in Y and down in Z, and repeats, biting
+  2 mm deeper each cycle. Eight cycles, then the ordinary push carries the
+  loosened part off. All four numbers are constants at the top of
+  `printers/bedslinger.py` (`ZPUSH_APPROACH_MM`, `ZPUSH_PRESS_MM`,
+  `ZPUSH_SWIPE_MM`, `ZPUSH_CYCLES`).
 * **A release hold sits between the cool-down and the push-off** (A1 / A1 Mini).
   Once the bed reaches its target the printer waits `--hold` seconds, so the part
   keeps shrinking off the plate before anything touches it. Nothing in that block
@@ -197,6 +210,7 @@ puts it on your PATH while still running the files in this folder (undo with
 | `-n, --loops` | 1                               | how many copies |
 | `-t, --temp` | 26                              | bed temperature to cool down to before the push-off |
 | `--hold` | 300                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
+| `--zpush` | off | A1/A1 Mini: work each part loose with press-and-swipe cycles before pushing it off (`-zpush` also works; the cycle is tuned by the `ZPUSH_*` constants in `printers/bedslinger.py`) |
 | `-p, --printer` | auto                            | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
 | `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |
 | `--dry-run` | off                             | report without writing |
@@ -279,8 +293,12 @@ The suite is anchored on two real reference files:
   emitted in the last loop only, lift before the relative drop, and after the
   sweep but before the motors are switched off.
 * **`test_push_plan.py`** — the push planner: which parts share a line, that a
-  line comes down to the shortest part it pushes, that the lines run left to
-  right, and that the blade lifts clear before the bed comes back.
+  line pushes at the height of the shortest part it covers, that the lines run
+  left to right, and — walking the emitted moves — that the blade never descends
+  at a spot it has not already been to.
+* **`test_zpush.py`** — the press-and-swipe cycles: the four moves in order, the
+  2 mm of advance per cycle, Z back where it started each time, the approach that
+  stops short of the part, and fewer cycles rather than moves past the plate edge.
 * **`test_parts.py`** — the part finder: parts standing close together, the skirt
   that loops around all of them, travel moves crossing the gaps, and the two
   in-repo plates, whose single part has to match the model's own bounding box.

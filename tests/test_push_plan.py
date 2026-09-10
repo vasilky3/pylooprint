@@ -5,9 +5,11 @@ several parts needs several passes.  What has to hold:
 
 * a part is only counted as pushed by a line within ``blade_width * overlap`` of
   its centre - 27.5 mm on the A1 Mini;
-* a line comes down to the height of the *shortest* part it pushes, so the blade
+* a line pushes at the height of the *shortest* part it covers, so the blade
   touches every one of them; and
-* between lines the blade travels above everything still standing on the plate.
+* the blade only ever descends at a point it has already been to, crossing the
+  plate at the travel height instead - ``test_the_blade_never_descends_at_a_new_spot``
+  is the one that pins that.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import pytest
 
 from pylooprint.core.parts import PartBounds, find_parts
 from pylooprint.core.project import ThreeMfProject
-from pylooprint.core.push_plan import PUSH_CLEARANCE_MM, plan_push_lines
+from pylooprint.core.push_plan import plan_push_lines
 from pylooprint.core.structure import split_gcode
 from pylooprint.printers import EndCodeContext, get_profile
 from pylooprint.printers.a1_mini import BLADE_OVERLAP, BLADE_WIDTH, PUSH_MIN_Z
@@ -91,15 +93,13 @@ def test_lines_run_left_to_right_whatever_order_the_parts_arrive_in():
     assert [line.parts for line in lines] == [(2,), (3,), (1,)]
 
 
-def test_the_travel_height_clears_what_is_still_on_the_plate():
-    """Parts leave left to right, so the lift needed drops as the plan runs."""
-    lines = _plan(_part(34, 50), _part(90, 30), _part(146, 10))
+def test_the_contact_y_is_the_back_edge_of_the_parts_on_the_line():
+    """The bed carries a part towards the nozzle, so its far Y is met first."""
+    near = PartBounds(30.0, 38.0, 10.0, 40.0, 0.2, 20.0)
+    far = PartBounds(40.0, 48.0, 60.0, 95.0, 0.2, 20.0)
 
-    assert [line.safe_z for line in lines] == [
-        50 + PUSH_CLEARANCE_MM,
-        30 + PUSH_CLEARANCE_MM,
-        10 + PUSH_CLEARANCE_MM,
-    ]
+    (line,) = _plan(near, far)
+    assert line.contact_y == 95.0
 
 
 def test_a_plate_with_nothing_on_it_has_no_plan():
@@ -140,17 +140,68 @@ def test_the_end_code_runs_one_block_per_line():
     assert "G1 Z7.00 F600" in code  # 10 * 0.7 for the second
 
 
-def test_the_blade_lifts_before_the_bed_comes_back():
-    """Otherwise it drags through whatever is still standing on the plate."""
+def _walk(block: str) -> list[tuple[str, float, float, float]]:
+    """Every move of a push block as ``(line, x, y, z)`` once it has run.
+
+    The head arrives from the cool-down park: off the plate at X-13, bed forward,
+    and down at Z1 where the in-place head template leaves it.
+    """
+    x, y, z = -13.0, 180.0, 1.0
+    walked = []
+    for line in block.split("\n"):
+        if not (line.startswith("G0 ") or line.startswith("G1 ")):
+            continue
+        for word in line.split(";")[0].split():
+            if word[0] in "XYZ":
+                value = float(word[1:])
+                x, y, z = (
+                    value if word[0] == "X" else x,
+                    value if word[0] == "Y" else y,
+                    value if word[0] == "Z" else z,
+                )
+        walked.append((line, x, y, z))
+    return walked
+
+
+def test_the_blade_never_descends_at_a_new_spot():
+    """Every drop happens where the nozzle has already been: the corner, or Y180.
+
+    Coming down anywhere else means coming down blind onto whatever is under the
+    blade, which on a plate of several parts is a part's top edge.
+    """
     code = _end_code([_part(34, 50), _part(146, 10)])
     block = code[code.index(PUSH_PLAN_START) : code.index("G1 Y135")]
 
-    moves = [line for line in block.split("\n") if line.startswith("G1 ")]
+    previous_z = 1.0
+    previous_x = -13.0
+    for line, x, y, z in _walk(block):
+        if z < previous_z:
+            assert x == previous_x, f"descended after moving in X: {line!r}"
+            assert y == A1_MINI.y_forward or x == -13.0, f"descended mid-plate: {line!r}"
+        previous_x, previous_z = x, z
+
+
+def test_the_blade_crosses_the_plate_at_the_travel_height():
+    code = _end_code([_part(34, 50), _part(146, 10)])
+    block = code[code.index(PUSH_PLAN_START) : code.index("G1 Y135")]
+
+    crossings = [(line, z) for line, x, _, z in _walk(block) if line.startswith("G0 X")]
+    assert len(crossings) == 2, "one crossing per push line"
+    for line, z in crossings:
+        assert z == PUSH_MIN_Z, f"crossed the plate at Z{z}: {line!r}"
+
+
+def test_the_bed_comes_back_at_the_push_height_and_drops_only_then():
+    """The return retraces the band just swept, so it needs no clearance."""
+    code = _end_code([_part(34, 50), _part(146, 10)])
+    block = code[code.index(PUSH_PLAN_START) : code.index("G1 Y135")]
+
+    moves = [line for line, *_ in _walk(block)]
     returns = [index for index, line in enumerate(moves) if line.startswith("G1 Y180")]
     assert len(returns) == 2, "one bed return per push line"
     for index in returns:
-        # 50 + 2 clears the tall part, 10 + 2 clears what is left after it.
-        assert moves[index - 1].startswith(("G1 Z52.00", "G1 Z12.00"))
+        assert moves[index - 1].startswith("G1 Y-0.5")  # the push it retraces
+        assert moves[index + 1].startswith(f"G1 Z{PUSH_MIN_Z:.2f}")
 
 
 def test_without_parts_the_push_falls_back_to_one_line():

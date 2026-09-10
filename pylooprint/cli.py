@@ -14,6 +14,12 @@ from .core.project import ThreeMfProject
 from .errors import LooprintError
 from .pipeline import BuildResult, build_loops, detect_printer
 from .printers import available_profiles, get_profile
+from .printers.bedslinger import (
+    ZPUSH_APPROACH_MM,
+    ZPUSH_CYCLES,
+    ZPUSH_PRESS_MM,
+    ZPUSH_SWIPE_MM,
+)
 from .settings import (
     COOLDOWN_WARNING_THRESHOLD,
     DEFAULT_HOLD_SECONDS,
@@ -69,6 +75,15 @@ def build_parser() -> argparse.ArgumentParser:
             f"the push-off beep (default: {DEFAULT_HOLD_SECONDS}; 0 skips the wait, the beep always sounds)"
         ),
     )
+    parser.add_argument(
+        "--zpush",
+        "-zpush",
+        action="store_true",
+        help=(
+            "A1/A1 Mini: work each part loose with press-and-swipe cycles before pushing it "
+            "off, instead of one straight shove (tune the cycle in printers/bedslinger.py)"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true", help="report what would be built without writing a file")
     parser.add_argument("--version", action="version", version=f"pylooprint {__version__}")
     return parser
@@ -105,7 +120,9 @@ def _run(args: argparse.Namespace) -> tuple[BuildResult, Path]:
     project = ThreeMfProject.open(args.input)
     profile = get_profile(args.printer) if args.printer else detect_printer(project)
 
-    settings = LoopSettings(loops=args.loops, cooldown_temp=args.temp, hold_seconds=args.hold)
+    settings = LoopSettings(
+        loops=args.loops, cooldown_temp=args.temp, hold_seconds=args.hold, zpush=args.zpush
+    )
 
     result = build_loops(project, profile, settings, source_name=args.input.name)
 
@@ -142,7 +159,7 @@ def _report_parts(parts: Sequence[PartBounds]) -> None:
         print(f"  ... and {len(parts) - MAX_PARTS_LISTED} more")
 
 
-def _report_push_plan(result: BuildResult) -> None:
+def _report_push_plan(result: BuildResult, zpush: bool) -> None:
     """Where the blade comes down, and how far, for each pass it makes.
 
     Nothing to say for a printer whose push-off does not follow the parts.
@@ -167,6 +184,12 @@ def _report_push_plan(result: BuildResult) -> None:
         )
     if len(lines) > MAX_PARTS_LISTED:
         print(f"  ... and {len(lines) - MAX_PARTS_LISTED} more")
+    if zpush:
+        print(
+            f"push mode   : z-push, {ZPUSH_CYCLES} cycles "
+            f"(approach {ZPUSH_APPROACH_MM:.1f}, press {ZPUSH_PRESS_MM:.1f}, "
+            f"swipe {ZPUSH_SWIPE_MM:.1f} mm)"
+        )
 
 
 def _report(args: argparse.Namespace, result: BuildResult, destination: Path) -> None:
@@ -176,7 +199,7 @@ def _report(args: argparse.Namespace, result: BuildResult, destination: Path) ->
     if result.placement:
         print(f"placement   : {result.placement.direction} (X {result.placement.min_x:.1f}..{result.placement.max_x:.1f})")
     _report_parts(result.parts)
-    _report_push_plan(result)
+    _report_push_plan(result, args.zpush)
     print(f"cool-down   : {args.temp} C -> commanded {result.profile.apply_temp_offset(args.temp)} C")
     wait = f"{args.hold} s, then the push-off beep" if args.hold else "no wait, push-off beep only"
     print(f"hold        : {wait}")

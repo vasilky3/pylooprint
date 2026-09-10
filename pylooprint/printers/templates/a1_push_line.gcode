@@ -1,9 +1,8 @@
 ;----- push line @INDEX@ of @TOTAL@: @PART_LIST@ -----
-G1 Z@SAFE_Z@ F600	; lift clear of everything still standing on the plate
-G0 X@X@ F@ALIGN_FEED@ ; align the blade with this line
-G1 Z@Z@ F600	; down to @PUSH_FACTOR@ of the shortest part on this line
+G0 X@X@ F@ALIGN_FEED@ ; across the plate at the travel height: at Z@TRAVEL_Z@ a part in the way is shoved aside, never struck from above
+G1 Z@Z@ F600	; up to @PUSH_FACTOR@ of the shortest part on this line - at a new X, Z only ever goes up
 M400 P100
-G1 Y-0.5 F300		; push: the bed drives the parts into the blade, slowly
+@PUSH_MOVES@
 M400 ; wait for the push to finish
-G1 Z@SAFE_Z@ F600	; lift before the bed comes back, or the blade drags through what is left
-G1 Y@Y_FORWARD@ F800	; bed back, ready for the next line
+G1 Y@Y_FORWARD@ F800	; bed back along the band just swept, at the same height
+G1 Z@TRAVEL_Z@ F600	; back to the travel height, at a point the nozzle has already been
