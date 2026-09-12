@@ -1,6 +1,5 @@
 ;===== machine: A1 mini =========================
-;Made by FactorianDesigns, please completely watch the related Youtube video before you try this out
-;===== date: 20240620 =====================
+;===== date: 20250822 ==================
 
 ;===== start to heat heatbead&hotend==========
 M1002 gcode_claim_action : 2
@@ -86,20 +85,20 @@ M620 S[initial_no_support_extruder]A   ; switch material if AMS exist
     T[initial_no_support_extruder]
     G1 X-13.5 F3000
     M400
-    M620.1 E F{filament_max_volumetric_speed[initial_no_support_extruder]/2.4053*60} T{nozzle_temperature_range_high[initial_no_support_extruder]}
+    M620.1 E F{flush_volumetric_speeds[initial_no_support_extruder]/2.4053*60} T{flush_temperatures[initial_no_support_extruder]}
     M109 S250 ;set nozzle to common flush temp
     M106 P1 S0
     G92 E0
     G1 E50 F200
     M400
     M1002 set_filament_type:{filament_type[initial_no_support_extruder]}
-    M104 S{nozzle_temperature_range_high[initial_no_support_extruder]}
+    M104 S{flush_temperatures[initial_no_support_extruder]}
     G92 E0
-    G1 E50 F{filament_max_volumetric_speed[initial_no_support_extruder]/2.4053*60}
+    G1 E50 F{flush_volumetric_speeds[initial_no_support_extruder]/2.4053*60}
     M400
     M106 P1 S178
     G92 E0
-    G1 E5 F{filament_max_volumetric_speed[initial_no_support_extruder]/2.4053*60}
+    G1 E5 F{flush_volumetric_speeds[initial_no_support_extruder]/2.4053*60}
     M109 S{nozzle_temperature_initial_layer[initial_no_support_extruder]-20} ; drop nozzle temp, make filament shink a bit
     M104 S{nozzle_temperature_initial_layer[initial_no_support_extruder]-40}
     G92 E0
@@ -137,7 +136,15 @@ M622 S1
 M623
 
 G1 Z5 F3000
-; ++++++++++++ Ab hier Mech Mode, davor leveling +++++++++++
+G1 X90 Y-1 F30000
+M400 P200
+M970.3 Q1 A7 K0 O2
+M974 Q1 S2 P0
+
+G1 X90 Y0 Z5 F30000
+M400 P200
+M970 Q0 A10 B50 C90 H15 K0 M20 O3
+M974 Q0 S2 P0
 
 M975 S1
 G1 F30000
@@ -249,8 +256,6 @@ G2 I1 J0 X2
 G2 I-0.75 J0 X-1.5
 G2 I1 J0 X2
 G2 I-0.75 J0 X-1.5
-G2 I1 J0 X2
-G2 I-0.75 J0 X-1.5
 
 G90
 G1 Z5 F30000
@@ -330,7 +335,7 @@ G1 X-13.5 Y0 Z10 F10000
 G1 E1.2 F500
 M400
 M1002 set_filament_type:UNKNOWN
-;M109 S{nozzle_temperature[initial_extruder]}
+M109 S{nozzle_temperature[initial_extruder]}
 M400
 
 M412 S1 ;    ===turn on  filament runout detection===
@@ -340,6 +345,119 @@ G392 S0 ;turn on clog detect
 
 M620.3 W1; === turn on filament tangle detection===
 M400 S2
+
+M1002 set_filament_type:{filament_type[initial_no_support_extruder]}
+;M1002 set_flag extrude_cali_flag=1
+M1002 judge_flag extrude_cali_flag
+M622 J1
+    M1002 gcode_claim_action : 8
+    
+    M400
+    M900 K0.0 L1000.0 M1.0
+    G90
+    M83
+    G1 E12 F300 ; prime in the air over the chute - the calibration measures pressure, it does not scan a line
+    M400
+    
+    G1 X-13.5 Y0 Z10 F10000
+    M400
+    
+    G1 E10 F{outer_wall_volumetric_speed/2.4*60}
+    M983 F{outer_wall_volumetric_speed/2.4} A0.3 H[nozzle_diameter]; cali dynamic extrusion compensation
+    M106 P1 S178
+    M400 S7
+    G1 X0 F18000
+    G1 X-13.5 F3000
+    G1 X0 F18000 ;wipe and shake
+    G1 X-13.5 F3000
+    G1 X0 F12000 ;wipe and shake
+    G1 X-13.5 F3000
+    M400
+    M106 P1 S0
+
+    M1002 judge_last_extrude_cali_success
+    M622 J0
+        M983 F{outer_wall_volumetric_speed/2.4} A0.3 H[nozzle_diameter]; cali dynamic extrusion compensation
+        M106 P1 S178
+        M400 S7
+        G1 X0 F18000
+        G1 X-13.5 F3000
+        G1 X0 F18000 ;wipe and shake
+        G1 X-13.5 F3000
+        G1 X0 F12000 ;wipe and shake
+        M400
+        M106 P1 S0
+    M623
+    
+    G1 X-13.5 F3000
+    M400
+    M984 A0.1 E1 S1 F{outer_wall_volumetric_speed/2.4} H[nozzle_diameter]
+    M106 P1 S178
+    M400 S7
+    G1 X0 F18000
+    G1 X-13.5 F3000
+    G1 X0 F18000 ;wipe and shake
+    G1 X-13.5 F3000
+    G1 X0 F12000 ;wipe and shake
+    G1 X-13.5 F3000
+    M400
+    M106 P1 S0
+
+M623 ; end of "draw extrinsic para cali paint"
+
+;===== LOOPRINT PURGE WALL =====
+; A 30 mm two-line wall, 1.8 mm tall, on the strip the stock purge lines used.
+; Written for the 0.2 mm / 0.42 mm profile so it prints the same whatever print
+; profile is selected.  pylooprint shoves it off the front lip at the end of every
+; loop - see purge_wall_x / purge_sweep_y in pylooprint/printers/a1_mini.py, which
+; have to agree with the X68..98 / Y-3.46..-3.04 below.
+M109 S{nozzle_temperature_initial_layer[initial_extruder]} ; first-layer temperature, before anything is extruded
+G1 E12 F300 ; air purge over the chute - the head is at X-13.5 Z10
+M400
+M106 S255
+G90
+M83
+G0 X68 Y-3.04 Z10 F18000 ; the stock purge-line strip, in front of the plate
+G1 Z0.2 F3000
+G1 X98 E1.25 F1200 ; layer 1 at 0.5 mm line width
+G1 Y-3.46 E0.02
+G1 X68 E1.25
+G1 Z0.4 F3000
+G1 X98 E1.05 F1800 ; layers 2-9 at 0.42
+G1 Y-3.04 E0.01
+G1 X68 E1.05
+G1 Z0.6 F3000
+G1 X98 E1.05 F1800
+G1 Y-3.46 E0.01
+G1 X68 E1.05
+G1 Z0.8 F3000
+G1 X98 E1.05 F1800
+G1 Y-3.04 E0.01
+G1 X68 E1.05
+G1 Z1.0 F3000
+G1 X98 E1.05 F1800
+G1 Y-3.46 E0.01
+G1 X68 E1.05
+G1 Z1.2 F3000
+G1 X98 E1.05 F1800
+G1 Y-3.04 E0.01
+G1 X68 E1.05
+G1 Z1.4 F3000
+G1 X98 E1.05 F1800
+G1 Y-3.46 E0.01
+G1 X68 E1.05
+G1 Z1.6 F3000
+G1 X98 E1.05 F1800
+G1 Y-3.04 E0.01
+G1 X68 E1.05
+G1 Z1.8 F3000
+G1 X98 E1.05 F1800
+G1 Y-3.46 E0.01
+G1 X68 E1.05
+G1 Y0 F18000 ; no lift: drag the nozzle back across the wall's top and onto the plate edge - that is the wipe
+M106 S0
+;===== LOOPRINT PURGE WALL END =====
+M400
 
 ;========turn off light and wait extrude temperature =============
 M1002 gcode_claim_action : 0
@@ -366,5 +484,5 @@ T1000
 M211 X0 Y0 Z0 ;turn off soft endstop
 M1007 S1
 
-G0 E1 F800 ;Extrude a little so nozzle is filled for print start you might have to increase this up to E1.3 depending on your filament
-M104 S{nozzle_temperature_initial_layer[initial_extruder]} ; heat up to full temp in first few moves
+
+

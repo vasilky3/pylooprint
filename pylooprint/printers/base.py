@@ -18,6 +18,7 @@ from ..core.parts import PartBounds
 from ..core.push_plan import PushLine
 from ..core.structure import GcodeStructure
 from ..core.template import render_start_code
+from ..errors import LooprintError
 from ..settings import LoopSettings
 
 _TEMPLATE_PACKAGE = "pylooprint.printers.templates"
@@ -93,8 +94,10 @@ class PrinterProfile(ABC):
     temp_offset: int = 0
     #: How many ``M190`` lines are needed to outlast the firmware's wait timeout.
     m190_repeat: int = 1
-    #: Start-code template shipped for this machine.
-    start_template_name: str
+    #: Start-code template shipped for this machine, rendered by the default
+    #: :meth:`build_machine_code`.  ``None`` for a profile that keeps the
+    #: slicer's own start code instead and never renders one.
+    start_template_name: str | None = None
     #: The blade that pushes a part off: how wide the toolhead sweeps, in mm,
     #: and how much of that width has to sit over a part to carry it.  Their
     #: product is how far from a line a part may stand and still be pushed.
@@ -111,6 +114,10 @@ class PrinterProfile(ABC):
 
     def start_code(self) -> str:
         """Raw start-code template, before variable substitution."""
+        if self.start_template_name is None:
+            raise LooprintError(
+                f"{self.name} keeps the slicer's own start code and has no template to render"
+            )
         return load_template(self.start_template_name)
 
     def release_beep(self) -> str:

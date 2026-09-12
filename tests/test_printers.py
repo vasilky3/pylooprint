@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from pylooprint.errors import LooprintError
 from pylooprint.printers import EndCodeContext, available_profiles, get_profile
 from pylooprint.printers.detection import detect_from_gcode_header, detect_from_model_id
 from pylooprint.settings import LoopSettings
@@ -26,8 +27,14 @@ def test_gcode_header_detection_prefers_a1_mini_over_a1():
 
 @pytest.mark.parametrize("key", sorted(available_profiles()))
 def test_every_profile_produces_a_start_and_end_code(key):
+    """A profile either ships a start template or keeps the slicer's own."""
     profile = get_profile(key)
-    assert profile.start_code().strip()
+    if profile.start_template_name is None:
+        assert key == "a1mini", "only the in-place profile has no template to render"
+        with pytest.raises(LooprintError):
+            profile.start_code()
+    else:
+        assert profile.start_code().strip()
     assert profile.end_code(CONTEXT).strip()
 
 

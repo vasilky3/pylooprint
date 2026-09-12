@@ -73,6 +73,11 @@ class BedSlingerProfile(PrinterProfile):
     wiggle_y_positions: tuple[int, ...]
     #: Final "park the bed" line - the two machines word it differently.
     wiggle_final_line: str
+    #: The purge wall the looping profile prints on the front lip: the X of its
+    #: middle, and how far forward the bed drives to shove it off.  ``None`` on
+    #: a machine whose profile prints no wall, which leaves the sweep as it was.
+    purge_wall_x: float | None = None
+    purge_sweep_y: float | None = None
     #: Push geometry: the fraction of the model height the nozzle drops to, and
     #: the fixed Z it uses instead for a model shorter than the threshold.
     push_height_factor: float
@@ -264,13 +269,29 @@ class BedSlingerProfile(PrinterProfile):
         )
 
     def wiggle_sweep(self) -> str:
-        """Sweep the released part off the plate at bed level."""
+        """Sweep the released part off the plate at bed level.
+
+        Ends, on machines whose profile prints a purge wall, by shoving that
+        wall off the front lip on the way back: the nozzle slides along the
+        strip it has just swept to the wall's middle and the bed drives forward
+        past the lip, so the wall is hit broadside and goes off the front with
+        the rest of the debris.  The plate is empty by then, so nothing else is
+        in the way.
+        """
         lines = []
         for y in self.wiggle_y_positions:
             lines.append(
                 f"G1 Y{y} F2000\t;move bed back a little\n"
                 f"G1 X{_format_number(self.wiggle_x_right)} F800\t;move to the right\n"
                 f"G1 X{_format_number(self.wiggle_x_left)}\tF{_format_number(WIGGLE_SPEED)}\t;move back to the left\n"
+            )
+        if self.purge_wall_x is not None and self.purge_sweep_y is not None:
+            lines.append(
+                ";----- purge wall: off the front lip on the way back -----\n"
+                f"G1 X{_format_number(self.purge_wall_x)} F{_format_number(WIGGLE_SPEED)}"
+                "\t;along the strip just swept, to the middle of the purge wall\n"
+                f"G1 Y{_format_number(self.purge_sweep_y)} F800"
+                "\t;bed forward past the lip: the wall goes broadside off the front\n"
             )
         lines.append(self.wiggle_final_line)
         return "".join(lines)

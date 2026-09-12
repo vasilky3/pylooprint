@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from typing import Mapping
 
 from ..core.parking import LIFT_AFTER, PARK_BEFORE, lift_moves
-from ..core.patching import LineRangePatch, apply_patches, replace_between
+from ..core.patching import replace_between
 from ..core.placement import extrusion_enters_zone, measure_extrusion_bounds
 from ..core.structure import GcodeStructure
 from ..core.template import apply_speed_mode
@@ -42,6 +42,15 @@ PUSH_MIN_Z = 0.2
 #: The bed has to stop that much earlier in its travel than the nozzle's own
 #: position would suggest, or the bumper is already into the part.
 ZPUSH_BUMPER_POSITION_MM = 30
+
+#: The purge wall the looping profile prints on the front lip, where the stock
+#: purge lines go: two lines along X68..98 at Y-3.46 / Y-3.04, 1.8 mm tall (see
+#: ``profiles/source/a1mini_start.gcode``).  The sweep ends by driving the bed
+#: forward at its middle so the nozzle shoves it off the lip broadside - to 1 mm
+#: past the stock draw's own Y-4, which the machine is known to reach.  Change
+#: the wall in the profile and these have to follow.
+PURGE_WALL_X = 83.0
+PURGE_SWEEP_Y = -5.0
 
 #: Width of the toolhead that does the pushing, in mm, and how much of it has to
 #: sit over a part to carry it off.  55 * 0.5 = 27.5 mm is how far a part may
@@ -86,8 +95,14 @@ class A1MiniProfile(BedSlingerProfile):
     wiggle_x_right = 180
     wiggle_y_positions = (135, 90, 45, 0)
     wiggle_final_line = "G1 Y185 F2000 ;move bed forward one last time\n"
+    purge_wall_x = PURGE_WALL_X
+    purge_sweep_y = PURGE_SWEEP_Y
 
-    start_template_name = "start_a1_mini.gcode"
+    # No start template: the slicer's own start code is kept as it is (the
+    # looping profile in profiles/ prints the purge wall), so there is nothing
+    # to render.  The end templates stay - the shared bed-slinger engine is
+    # exercised through them, and result.gcode.3mf pins the original tool's
+    # A1 Mini end code against them.
     end_head_template_name = "end_a1_mini_head.gcode"
     end_tail_template_name = "end_a1_mini_tail.gcode"
 
@@ -137,50 +152,20 @@ class A1MiniProfile(BedSlingerProfile):
     ) -> MachineCode:
         """Keep the slicer's machine G-code and patch only what looping breaks.
 
-        Everything the printer profile configured - flow calibration, bed
-        levelling, build-plate detection, timelapse - survives, so only the
-        purge lines and the tail of the end code are rewritten.
+        The start code is taken as the slicer wrote it.  What looping needs
+        from it - a purge that does not land where the next part goes - is the
+        looping profile's job (``profiles/source/a1mini_start.gcode`` prints a
+        purge wall on the front lip), so nothing here has to know Bambu's
+        template line by line.  Only the tail of the end code is rewritten.
         """
-        start_code = apply_patches(structure.slicer_start_code, self.start_code_patches())
         park = self.final_park(context)
         return MachineCode(
-            start_code=apply_speed_mode(start_code),
+            start_code=apply_speed_mode(structure.slicer_start_code),
             end_code=self.patch_slicer_end_code(structure.slicer_end_code, context),
             final_end_code=(
                 self.patch_slicer_end_code(structure.slicer_end_code, context, park=park)
                 if park
                 else None
-            ),
-        )
-
-    def start_code_patches(self) -> Sequence[LineRangePatch]:
-        """Purge into the air instead of drawing a line on the plate.
-
-        The slicer draws its extrusion-calibration line across the front of the
-        bed.  On the second and later loops that area is where the previous part
-        was ejected from, and a drawn line would also be printed on top of the
-        plate the next part has to stick to, so both calibration draws become an
-        in-air purge.
-        """
-        return (
-            LineRangePatch(
-                name="extrusion calibration purge",
-                # inside "M622 J1" / extrude_cali_flag:
-                #   G0 X68 Y-4 F30000 ... G0 Y0 Z0 F20000 / M400 / <blank>
-                after=r"^M900 K[\d.]+ L[\d.]+ M[\d.]+$",
-                first=r"^G0 X\d+(?:\.\d+)? Y-?[\d.]+ F30000$",
-                last=r"^G0 Y0 Z0 F20000$",
-                extra_lines=2,
-                replacement=("G0 E50 F100", "M400", "G0 X80  F20000"),
-            ),
-            LineRangePatch(
-                name="extrusion calibration test purge",
-                # inside ";===== extrude cali test":
-                #   G0 X68 Y-2.5 F30000 ... G0 X115 Z0 F20000 / G0 Z5
-                after=r"^;===== extrude cali test",
-                first=r"^G0 X\d+(?:\.\d+)? Y-?[\d.]+ F30000$",
-                last=r"^G0 Z5$",
-                replacement=("G0 E50 F100",),
             ),
         )
 

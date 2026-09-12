@@ -27,11 +27,19 @@ templates (they were extracted once into `printers/templates/`).
 Keep the machine G-code the slicer emitted and rewrite only what is wrong for
 looping:
 
-* **Purge lines become air purges.** The slicer draws its extrusion-calibration
-  line across the front of the plate. On the second and later loops that is
-  where the previous part was just ejected from, and the line would be drawn
-  onto the plate the next part has to stick to. Both calibration draws become
-  `G0 E50 F100` — purge into the air instead.
+* **The purge is the profile's job, not pylooprint's.** The stock start G-code
+  draws two calibration lines on the strip in front of the plate. pylooprint used
+  to cut those out and purge into the air instead; now the start code is taken
+  exactly as the slicer wrote it, and the looping machine profile that ships in
+  `profiles/` does the right thing itself: the calibration draw inside `M622 J1`
+  becomes a short air purge (the A1 Mini's flow calibration measures pressure,
+  it does not scan a line), and the second draw becomes a small **purge wall** —
+  waits for the first-layer nozzle temperature, purges 12 mm in the air, then
+  prints two lines along X68..98 on the front lip, 1.8 mm tall in nine 0.2 mm
+  layers, and ends by dragging the nozzle across the wall's top onto the plate
+  edge as a wipe. Written as plain G-code for the 0.2 mm profile, so it comes
+  out the same whatever print profile is selected. The only thing pylooprint
+  knows about the wall is where to shove it off at the end of the sweep.
 * **The end code gets an eject sequence spliced in.** Everything the slicer does
   first (timelapse, filament unload, hotend off) is kept, the Z-lift is carried
   over, the gantry parks up against the mechanical switch at the top (Z184 —
@@ -138,10 +146,11 @@ These run identically for a P1, X1, A1 and A1 Mini:
 Step 8 is where the two strategies part company, and **the profile decides which
 one it uses** — the pipeline just calls `profile.build_machine_code(...)` and
 takes what it is handed. `PrinterProfile.build_machine_code` renders Factorian's
-templates by default; `A1MiniProfile` overrides that single method to patch the
-slicer's own machine G-code instead, via `patching.py` — anchor-based line-range
-replacement that raises rather than silently mis-patching when an anchor is
-missing.
+templates by default; `A1MiniProfile` overrides that single method to keep the
+slicer's own machine G-code instead, splicing the eject sequence into its end
+code via `patching.py` — an anchored replacement that raises rather than
+silently mis-patching when an anchor is missing. The start code passes through
+untouched.
 
 Porting a printer to the in-place strategy therefore means overriding one
 method. There is no capability flag to keep in step with it.
@@ -180,7 +189,8 @@ What genuinely differs per machine:
 | Release hold | yes | yes | — | — |
 | Push-off beep | yes | yes | yes | yes |
 | Eject keep-out | — | X 0–15, Y 150–180 | — | — |
-| Extras | — | in-place patching | splices lanes into Factorian's template | cutter sequence, aux fan |
+| Purge wall shove | — | X83, to Y-5 | — | — |
+| Extras | — | in-place end-code splice | splices lanes into Factorian's template | cutter sequence, aux fan |
 
 Adding a printer means one module plus one entry in `printers/__init__.py`;
 nothing in `core/` changes.
@@ -205,6 +215,28 @@ deliberately does *not* use the model's bounding box: a plate that reaches the
 left edge at the front and the back edge in the middle has a box covering a
 corner it never touches, and judging by the box refuses a perfectly good file.
 Brim and skirt are material too, so they are measured like anything else.
+
+---
+
+## The looping profile
+
+Slice with the machine profile in `profiles/machine/PLP BBL A1 mini 0.4
+nozzle.json` — import it in OrcaSlicer via *Import Configs* — and the start
+G-code does its purging in a way that survives looping (see above). A plate
+sliced with the stock profile still builds; it just draws the stock purge lines
+on the front lip instead of the wall, and the same sweep move clears them.
+
+The file to edit is `profiles/source/a1mini_start.gcode`, one command per line;
+the JSON is written from it by
+
+```bash
+python profiles/build_profile.py
+```
+
+(a JSON string cannot hold line breaks, which is why the two exist). The test
+suite fails if the JSON is stale. If you move or resize the wall there, the two
+numbers pylooprint uses to shove it off — `PURGE_WALL_X` and `PURGE_SWEEP_Y` in
+`printers/a1_mini.py` — have to follow.
 
 ---
 
@@ -287,6 +319,13 @@ python -m pytest
 
 The suite is anchored on two real reference files:
 
+* **`test_profile.py`** — the looping machine profile: the JSON is built from
+  the readable source, the wall block waits for temperature before extruding,
+  stands where the stock purge lines did, is nine 0.2 mm layers to 1.8 mm, and
+  ends with the wipe; the sweep constants agree with it.
+* **`test_purge_wall.py`** — the shove that closes the sweep: after the last
+  strip, to the wall's middle, forward past the lip, then the usual return; the
+  A1, whose profile prints no wall, keeps its sweep unchanged.
 * **`test_inplace.py`** — the primary. Its reference is
   `Gcode/test 2 blocks gcode/test 2 blocks mymod/Metadata/plate_1.gcode`, the
   slicer output in `test 2 blocks/` patched by hand (air purges + spliced eject
