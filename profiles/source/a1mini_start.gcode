@@ -468,6 +468,8 @@ M400 ; wait all motion done before implement the emprical L parameters
 ;curr_bed_type={curr_bed_type}
 {if curr_bed_type=="Textured PEI Plate"}
 G29.1 Z{-0.02} ; for Textured PEI Plate
+{else}
+G29.1 Z{0} ; z-offset
 {endif}
 
 M960 S1 P0 ; turn off laser
