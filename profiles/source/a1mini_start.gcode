@@ -416,15 +416,14 @@ M623 ; end of "draw extrinsic para cali paint"
 ; pylooprint splits the file at the first one and would take the rest of the
 ; wall for a part.  See LAYER_MARKER_RE in pylooprint/core/constants.py.
 M109 S{nozzle_temperature_initial_layer[initial_extruder]} ; first-layer temperature, before anything is extruded
-M106 S255 ; fan on for the purge
-G1 E12 F300 ; air purge over the chute - the head is at X-13.5 Z10
+G1 E30 F200 ; air purge over the chute - the head is at X-13.5 Z10
 M400
 M106 S0 ; first pass without fan, as the 0.2 mm profile prints its first layer
 G90
 M83
-G0 X68 Y-3.04 Z10 F18000 ; the stock purge-line strip, in front of the plate
+G0 X64 Y-3.04 Z10 F18000 ; the stock purge-line strip, in front of the plate
 G1 Z0.2 F3000
-G1 X98 E1.25 F1200 ; first pass, 0.5 mm wide as the 0.2 mm profile's first line
+G1 X98 E1.25 F1800 ; first pass, 0.5 mm wide as the 0.2 mm profile's first line
 G1 Y-3.46 E0.02
 G1 X68 E1.25
 M106 S255 ; fan for the rest of the wall
@@ -459,9 +458,9 @@ G1 X68 E1.05
 G1 Z1.8 F3000
 G1 X98 E1.05 F1800
 G1 Y-3.46 E0.01
+M106 S0 ; last line without fan
 G1 X68 E1.05
 G1 Y0 F18000 ; no lift: drag the nozzle back across the wall's top and onto the plate edge - that is the wipe
-M106 S0
 ;===== LOOPRINT PURGE WALL END =====
 M400
 
