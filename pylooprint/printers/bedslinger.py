@@ -14,12 +14,31 @@ from typing import Sequence
 
 from ..core.jsnum import to_fixed
 from ..core.parts import PartBounds
-from ..core.push_plan import PushLine, plan_push_lines
+from ..core.push_plan import PushLine, measure_contact, plan_push_lines
 from ..settings import LoopSettings
 from .base import EndCodeContext, PrinterProfile, load_template
 
 #: Fixed X feedrate of the wiggle sweep.
 WIGGLE_SPEED = 2000
+
+#: How far forward the bed drives for the push, and how slowly.  Slow on purpose:
+#: the bed is moving under the part, and a quick shove tips it instead of
+#: sliding it off.
+PUSH_END_Y = -0.5
+PUSH_SPEED = 300
+
+# --- the press-and-swipe push (--zpush) ------------------------------------
+#: Distance from nozzle to front line of bumper.
+ZPUSH_BUMPER_POSITION_MM = 0.0
+#: Where the blade stops on its way to the part, short of touching it, in mm.
+ZPUSH_APPROACH_MM = 1.0
+#: How far it then presses in - which is also what each cycle advances by.
+ZPUSH_PRESS_MM = 1.0
+#: The swipe: forward and up together, then back in Y and down in Z again.  This
+#: is the move that scoops under the part and breaks it off the plate.
+ZPUSH_SWIPE_MM = 2.0
+#: How many cycles run before the ordinary push carries the part away.
+ZPUSH_CYCLES = 8
 
 #: Feedrate of the "move the nozzle over the model centre" travel that precedes
 #: the push. The template end codes travel at rapid speed; the in-place strategy
@@ -54,19 +73,35 @@ class BedSlingerProfile(PrinterProfile):
     wiggle_y_positions: tuple[int, ...]
     #: Final "park the bed" line - the two machines word it differently.
     wiggle_final_line: str
+    #: The purge wall the looping profile prints on the front lip: the X of its
+    #: middle, and how far forward the bed drives to shove it off.  ``None`` on
+    #: a machine whose profile prints no wall, which leaves the sweep as it was.
+    purge_wall_x: float | None = None
+    purge_sweep_y: float | None = None
     #: Push geometry: the fraction of the model height the nozzle drops to, and
     #: the fixed Z it uses instead for a model shorter than the threshold.
     push_height_factor: float
     push_min_model_height: float
     push_min_z: float
+    #: How far in front of the nozzle the bumper's front face sits.  The bumper is
+    #: what touches the part, so contact comes that much earlier in the bed's
+    #: travel than the nozzle's own position says; a machine whose offset has not
+    #: been measured keeps 0 and behaves as before.
+    zpush_bumper_position: float = ZPUSH_BUMPER_POSITION_MM
 
     def apply_temp_offset(self, temp: int) -> int:
         """The bed sensor reads ~4 degrees high, and 15 C is the floor."""
         return max(15, temp + self.temp_offset)
 
-    def push_plan(self, parts: Sequence[PartBounds]) -> list[PushLine]:
-        """One line per part, or per group of parts sharing an X band."""
-        return plan_push_lines(
+    def push_plan(self, parts: Sequence[PartBounds], print_body: str = "") -> list[PushLine]:
+        """One line per part, or per group of parts sharing an X band.
+
+        Given the print body, each line's contact Y is re-measured against the
+        G-code - the back edge of whatever stands under the bumper at the height
+        the blade pushes at, which is not the back edge of the part's box.  Only
+        the press-and-swipe push needs that, so only it pays for the scan.
+        """
+        lines = plan_push_lines(
             parts,
             blade_width=self.blade_width,
             overlap=self.blade_overlap,
@@ -74,23 +109,40 @@ class BedSlingerProfile(PrinterProfile):
             min_model_height=self.push_min_model_height,
             min_z=self.push_min_z,
         )
+        if print_body:
+            lines = measure_contact(
+                print_body,
+                lines,
+                reach=self.blade_width * self.blade_overlap,
+                bumper=self.zpush_bumper_position,
+            )
+        return lines
 
     def push_gcode(
         self, context: EndCodeContext | None = None, align_feed: int = ALIGN_FEED_RAPID
     ) -> str:
         """Run the blade down every push line, left to right.
 
+        The order of the moves matters as much as the positions: **the blade only
+        ever descends at a point it has already been to**, and it crosses the
+        plate at the travel height, where a part in its way is shoved aside
+        rather than struck from above.  So every motion retraces a path already
+        proven clear - down in the corner, across at Z``push_min_z``, up at the
+        line's own X, push, bed back along the band just swept, and only there
+        down again.
+
         Falls back to the single line through the plate centre when the parts
         are unknown - a body with nothing measurable in it still has to be
         ejected, and the slicer's own centre is the best guess left.
         """
-        lines = self.push_plan(context.parts) if context is not None else []
+        lines = self._lines(context)
         if not lines:
             return self._single_push_gcode(align_feed)
 
-        blocks = [self._push_plan_header(lines)]
+        zpush = context is not None and context.settings.zpush
+        blocks = [self._push_plan_header(lines, zpush=zpush)]
         blocks += [
-            self._push_line_gcode(line, index, len(lines), align_feed)
+            self._push_line_gcode(line, index, len(lines), align_feed, zpush=zpush)
             for index, line in enumerate(lines, start=1)
         ]
         blocks.append(
@@ -99,7 +151,18 @@ class BedSlingerProfile(PrinterProfile):
         )
         return "\n".join(blocks)
 
-    def _push_plan_header(self, lines: Sequence[PushLine]) -> str:
+    def _lines(self, context: EndCodeContext | None) -> Sequence[PushLine]:
+        """The push the pipeline planned, or one worked out from the parts.
+
+        The pipeline plans the push once so the report and the G-code name the
+        same moves; a profile asked for an end code on its own still plans its
+        own, which is what the tests and the template path do.
+        """
+        if context is None:
+            return []
+        return context.push_lines or self.push_plan(context.parts)
+
+    def _push_plan_header(self, lines: Sequence[PushLine], *, zpush: bool) -> str:
         """What the plan is, spelled out where the operator will read it."""
         reach = self.blade_width * self.blade_overlap
         header = [
@@ -113,24 +176,86 @@ class BedSlingerProfile(PrinterProfile):
                 f"; line {index}: X {to_fixed(line.x, 2)}  Z {to_fixed(line.z, 2)}"
                 f"  {_part_list(line)}"
             )
-        header.append("M220 S100 ; Reset to standard speed for safe push-off")
+        if zpush:
+            header.append(f"; {_zpush_summary()}")
+        header += [
+            "M220 S100 ; Reset to standard speed for safe push-off",
+            f"G1 Z{to_fixed(self.push_min_z, 2)} F600 ; down to the travel height,"
+            " while the head is still clear of the plate in the corner",
+        ]
         return "\n".join(header) + "\n"
 
     def _push_line_gcode(
-        self, line: PushLine, index: int, total: int, align_feed: int
+        self, line: PushLine, index: int, total: int, align_feed: int, *, zpush: bool
     ) -> str:
         return (
             load_template("a1_push_line.gcode")
             .replace("@INDEX@", str(index))
             .replace("@TOTAL@", str(total))
             .replace("@PART_LIST@", _part_list(line))
-            .replace("@SAFE_Z@", to_fixed(line.safe_z, 2))
+            .replace("@PUSH_MOVES@", self._push_moves(line, zpush=zpush))
+            .replace("@TRAVEL_Z@", to_fixed(self.push_min_z, 2))
             .replace("@X@", to_fixed(line.x, 2))
             .replace("@Z@", to_fixed(line.z, 2))
             .replace("@ALIGN_FEED@", str(align_feed))
             .replace("@PUSH_FACTOR@", _format_number(self.push_height_factor))
             .replace("@Y_FORWARD@", _format_number(self.y_forward))
         )
+
+    def _push_moves(self, line: PushLine, *, zpush: bool) -> str:
+        """How the bed drives the parts into the blade, once it is in place."""
+        if zpush and line.contact_y is not None:
+            return self._zpush_moves(line)
+
+        straight = (
+            f"G1 Y{_format_number(PUSH_END_Y)} F{PUSH_SPEED}"
+            "\t\t; push: the bed drives the parts into the blade, slowly"
+        )
+        if not zpush:
+            return straight
+        # Cycling needs somewhere to cycle: with no contact to start from the
+        # blade would work the air for as long as the plate is deep.
+        return (
+            "; no plastic found under the bumper at this height - nothing to work"
+            " loose, so this line just pushes\n" + straight
+        )
+
+    def _zpush_moves(self, line: PushLine) -> str:
+        """Work the part loose with press-and-swipe cycles, then push it off.
+
+        Each cycle presses in, swipes forward and up together - scooping under
+        the part, which is what actually breaks it off the plate - then comes
+        back in Y and down in Z, leaving the blade ``ZPUSH_PRESS_MM`` deeper than
+        it started.  The plain push then carries the loosened part away.
+        """
+        assert line.contact_y is not None  # the caller checks; this is for mypy
+        start = min(line.contact_y + ZPUSH_APPROACH_MM, self.y_forward)
+        moves = [
+            f"G1 Y{to_fixed(start, 2)} F{PUSH_SPEED}"
+            f"\t; up to {_format_number(ZPUSH_APPROACH_MM)} mm short of the part,"
+            " then work it loose - see the plan above"
+        ]
+
+        y = start
+        for _ in range(ZPUSH_CYCLES):
+            # The deepest point of the cycle; stop rather than push past the end.
+            if y - ZPUSH_PRESS_MM - ZPUSH_SWIPE_MM <= PUSH_END_Y:
+                break
+            pressed = y - ZPUSH_PRESS_MM
+            swiped = pressed - ZPUSH_SWIPE_MM
+            moves += [
+                f"G1 Y{to_fixed(pressed, 2)} F{PUSH_SPEED}",
+                f"G1 Y{to_fixed(swiped, 2)} Z{to_fixed(line.z + ZPUSH_SWIPE_MM, 2)} F{PUSH_SPEED}",
+                f"G1 Y{to_fixed(pressed, 2)} F{PUSH_SPEED}",
+                f"G1 Z{to_fixed(line.z, 2)} F600",
+            ]
+            y = pressed
+
+        moves.append(
+            f"G1 Y{_format_number(PUSH_END_Y)} F{PUSH_SPEED}"
+            "\t\t; the part is loose: push it off"
+        )
+        return "\n".join(moves)
 
     def _single_push_gcode(self, align_feed: int) -> str:
         """The one-line push: plate centre, one height, one pass."""
@@ -144,13 +269,29 @@ class BedSlingerProfile(PrinterProfile):
         )
 
     def wiggle_sweep(self) -> str:
-        """Sweep the released part off the plate at bed level."""
+        """Sweep the released part off the plate at bed level.
+
+        Ends, on machines whose profile prints a purge wall, by shoving that
+        wall off the front lip on the way back: the nozzle slides along the
+        strip it has just swept to the wall's middle and the bed drives forward
+        past the lip, so the wall is hit broadside and goes off the front with
+        the rest of the debris.  The plate is empty by then, so nothing else is
+        in the way.
+        """
         lines = []
         for y in self.wiggle_y_positions:
             lines.append(
                 f"G1 Y{y} F2000\t;move bed back a little\n"
                 f"G1 X{_format_number(self.wiggle_x_right)} F800\t;move to the right\n"
                 f"G1 X{_format_number(self.wiggle_x_left)}\tF{_format_number(WIGGLE_SPEED)}\t;move back to the left\n"
+            )
+        if self.purge_wall_x is not None and self.purge_sweep_y is not None:
+            lines.append(
+                ";----- purge wall: off the front lip on the way back -----\n"
+                f"G1 X{_format_number(self.purge_wall_x)} F{_format_number(WIGGLE_SPEED)}"
+                "\t;along the strip just swept, to the middle of the purge wall\n"
+                f"G1 Y{_format_number(self.purge_sweep_y)} F800"
+                "\t;bed forward past the lip: the wall goes broadside off the front\n"
             )
         lines.append(self.wiggle_final_line)
         return "".join(lines)
@@ -229,6 +370,15 @@ class BedSlingerProfile(PrinterProfile):
     # End-code template file names, supplied by the concrete profiles.
     end_head_template_name: str
     end_tail_template_name: str
+
+
+def _zpush_summary() -> str:
+    """One line naming what the press-and-swipe cycles will do."""
+    return (
+        f"{ZPUSH_CYCLES} press-and-swipe cycles, "
+        f"{_format_number(ZPUSH_PRESS_MM)} mm deeper each: press in, swipe "
+        f"{_format_number(ZPUSH_SWIPE_MM)} mm forward and up, back, down"
+    )
 
 
 def _part_list(line: PushLine) -> str:

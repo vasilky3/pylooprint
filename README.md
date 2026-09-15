@@ -27,11 +27,21 @@ templates (they were extracted once into `printers/templates/`).
 Keep the machine G-code the slicer emitted and rewrite only what is wrong for
 looping:
 
-* **Purge lines become air purges.** The slicer draws its extrusion-calibration
-  line across the front of the plate. On the second and later loops that is
-  where the previous part was just ejected from, and the line would be drawn
-  onto the plate the next part has to stick to. Both calibration draws become
-  `G0 E50 F100` — purge into the air instead.
+* **The purge is the profile's job, not pylooprint's.** The stock start G-code
+  draws two calibration lines on the strip in front of the plate. pylooprint used
+  to cut those out and purge into the air instead; now the start code is taken
+  exactly as the slicer wrote it, and the looping machine profile that ships in
+  `profiles/` does the right thing itself: the calibration draw inside `M622 J1`
+  becomes a short air purge (the A1 Mini's flow calibration measures pressure,
+  it does not scan a line), and the second draw becomes a small **purge wall** —
+  waits for the first-layer nozzle temperature, purges 12 mm in the air with the
+  fan on, then prints two lines along X68..98 on the front lip, 1.8 mm tall in
+  nine 0.2 mm layers — the first without fan, the rest with it, like the 0.2 mm
+  profile prints a part — and ends by dragging the nozzle across the wall's top
+  onto the plate edge as a wipe, fan off again for the model's first layer.
+  Written as plain G-code for the 0.2 mm profile, so it comes out the same
+  whatever print profile is selected. The only thing pylooprint knows about
+  the wall is where to shove it off at the end of the sweep.
 * **The end code gets an eject sequence spliced in.** Everything the slicer does
   first (timelapse, filament unload, hotend off) is kept, the Z-lift is carried
   over, the gantry parks up against the mechanical switch at the top (Z184 —
@@ -40,16 +50,42 @@ looping:
   slicer's own reset and finish sound close the loop. The move onto a push line
   crawls at F300 rather than a rapid, so the toolhead cannot knock a tall part
   over.
-* **The push follows the parts** (A1 / A1 Mini). The toolhead is a blade 55 mm
-  wide, and half of it has to sit over a part to carry it off, so one pass
-  sweeps everything whose centre is within 27.5 mm of it. Parts are grouped into
+* **The push follows the parts** (A1 / A1 Mini). The toolhead is a blade of a
+  known width, and a set fraction of it has to sit over a part to carry it off,
+  so one pass sweeps everything whose centre is within `blade_width × overlap` of
+  it — 12.5 mm as the A1 Mini is tuned today. Parts are grouped into
   as few such passes as possible and pushed left to right, each pass coming down
   to 70% of the height of the *shortest* part it covers — the blade then touches
   every part of the group instead of passing over the low ones, which is what a
   single pass at the plate's centre and the tallest part's height used to do.
-  Between passes the blade lifts above everything still standing before the bed
-  comes back for the next one. A plate whose body cannot be measured falls back
-  to that single central pass.
+  A plate whose body cannot be measured falls back to that single central pass.
+* **The blade only ever descends where it has already been.** Coming down at a
+  fresh spot means coming down blind onto whatever is under it, so instead it
+  drops to the travel height (Z0.2) while still in the corner, crosses the plate
+  at that height — where a part in the way is shoved aside rather than struck from
+  above — and only goes *up* once it is standing on its line. After the push the
+  bed comes back along the band just swept, at the same height, and the blade
+  drops again only there. Every move retraces a path already proven clear.
+* **`--zpush` works each part loose first.** Parts release better with a Z
+  component than with a straight shove, so this mode stops just short of the
+  first plastic the blade will meet — *measured in the G-code*, as the back edge
+  of whatever stands inside the bumper's width (the same `blade_width × overlap`
+  reach the grouping uses) at or above the height the blade pushes at, which is
+  not the back edge of the part's box: a cone at 70% of its height stands tens of
+  millimetres further in, and a neighbouring wall inside the band is met first
+  whether this line is aimed at it or not. The bumper's own offset in front of
+  the nozzle (`ZPUSH_BUMPER_POSITION_MM`, 30 mm on the A1 Mini) is added on top,
+  since that face is what touches the part and the bed therefore has to stop that
+  much earlier in its travel. Then it presses in, swipes forward *and* up
+  together — scooping under the part — comes back in Y and down in Z, and
+  repeats, biting one press deeper each cycle; after the set number of cycles the
+  ordinary push carries the loosened part off. A line with nothing under its
+  bumper at that height has no contact to work from, so it pushes straight and
+  says so, in the report and in a warning — better than cycling through thin air
+  for the depth of the plate. The cycle's numbers are constants
+  at the top of `printers/bedslinger.py` (`ZPUSH_APPROACH_MM`, `ZPUSH_PRESS_MM`,
+  `ZPUSH_SWIPE_MM`, `ZPUSH_CYCLES`), and the bumper offset sits with the other
+  per-machine figures in the profile.
 * **A release hold sits between the cool-down and the push-off** (A1 / A1 Mini).
   Once the bed reaches its target the printer waits `--hold` seconds, so the part
   keeps shrinking off the plate before anything touches it. Nothing in that block
@@ -112,10 +148,11 @@ These run identically for a P1, X1, A1 and A1 Mini:
 Step 8 is where the two strategies part company, and **the profile decides which
 one it uses** — the pipeline just calls `profile.build_machine_code(...)` and
 takes what it is handed. `PrinterProfile.build_machine_code` renders Factorian's
-templates by default; `A1MiniProfile` overrides that single method to patch the
-slicer's own machine G-code instead, via `patching.py` — anchor-based line-range
-replacement that raises rather than silently mis-patching when an anchor is
-missing.
+templates by default; `A1MiniProfile` overrides that single method to keep the
+slicer's own machine G-code instead, splicing the eject sequence into its end
+code via `patching.py` — an anchored replacement that raises rather than
+silently mis-patching when an anchor is missing. The start code passes through
+untouched.
 
 Porting a printer to the in-place strategy therefore means overriding one
 method. There is no capability flag to keep in step with it.
@@ -147,13 +184,15 @@ What genuinely differs per machine:
 | Bed sensor offset | −4 °C | −4 °C | none | none |
 | `M190` repeats | 45 | 50 | 30 | 30 |
 | Z-drop | 70% of height, Z0.2 under 6 mm | 70% of height, Z0.2 under 6 mm | top − 30 mm, Z1 under 31 mm | top − 30 mm, Z1 under 31 mm |
-| Blade / overlap | 55 mm × 0.5 | 55 mm × 0.5 | declared, unused | declared, unused |
+| Blade / overlap | 55 mm × 0.5 | 50 mm × 0.25 | declared, unused | declared, unused |
+| Bumper ahead of nozzle | not measured (0) | 30 mm | — | — |
 | Push lines | one per part or X band | one per part or X band | 3 fixed lanes | 3 fixed lanes |
 | Sweep | wiggle, 6 positions | wiggle, 4 positions | — | — |
 | Release hold | yes | yes | — | — |
 | Push-off beep | yes | yes | yes | yes |
 | Eject keep-out | — | X 0–15, Y 150–180 | — | — |
-| Extras | — | in-place patching | splices lanes into Factorian's template | cutter sequence, aux fan |
+| Purge wall shove | — | X83, to Y-5 | — | — |
+| Extras | — | in-place end-code splice | splices lanes into Factorian's template | cutter sequence, aux fan |
 
 Adding a printer means one module plus one entry in `printers/__init__.py`;
 nothing in `core/` changes.
@@ -181,6 +220,33 @@ Brim and skirt are material too, so they are measured like anything else.
 
 ---
 
+## The looping profile
+
+Slice with the machine profile in `profiles/machine/PLP BBL A1 mini 0.4
+nozzle.json` — import it in OrcaSlicer via *Import Configs* — and the start
+G-code does its purging in a way that survives looping (see above). A plate
+sliced with the stock profile still builds; it just draws the stock purge lines
+on the front lip instead of the wall, and the same sweep move clears them.
+
+The file to edit is `profiles/source/a1mini_start.gcode`, one command per line;
+the JSON is written from it by
+
+```bash
+python profiles/build_profile.py
+```
+
+(a JSON string cannot hold line breaks, which is why the two exist). The test
+suite fails if the JSON is stale. If you move or resize the wall there, the two
+numbers pylooprint uses to shove it off — `PURGE_WALL_X` and `PURGE_SWEEP_Y` in
+`printers/a1_mini.py` — have to follow. One rule for comments in that file: none
+may look like a slicer's layer-change marker (`; layer ...`, `;LAYER_CHANGE`,
+`; CHANGE_LAYER`, `;Z_HEIGHT` — the patterns in `LAYER_MARKER_RE`), because
+pylooprint splits a plate at the first one it meets after the start of the
+custom feature; a wall comment that did once ended the start code mid-wall and
+put the rest of the wall on the part list. The suite checks this too.
+
+---
+
 ## Usage
 
 ```bash
@@ -197,6 +263,7 @@ puts it on your PATH while still running the files in this folder (undo with
 | `-n, --loops` | 1                               | how many copies |
 | `-t, --temp` | 26                              | bed temperature to cool down to before the push-off |
 | `--hold` | 300                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
+| `--zpush` | off | A1/A1 Mini: work each part loose with press-and-swipe cycles before pushing it off (`-zpush` also works; the cycle is tuned by the `ZPUSH_*` constants in `printers/bedslinger.py`) |
 | `-p, --printer` | auto                            | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
 | `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |
 | `--dry-run` | off                             | report without writing |
@@ -216,9 +283,10 @@ parts       : 3
   part 1    : X 8.9..97.6  Y 10.5..77.5  top Z 54.40  (88.7 x 67.0 mm)
   part 2    : X 76.2..103.8  Y 76.2..103.8  top Z 76.40  (27.7 x 27.7 mm)
   part 3    : X 120.6..171.4  Y 9.6..60.4  top Z 33.40  (50.8 x 50.8 mm)
-push plan   : 2 line(s), left to right (blade 55 mm, reach 27.5 mm)
-  line 1    : X 71.62  Z 38.08  (parts 1, 2)
-  line 2    : X 145.99  Z 23.38  (part 3)
+push plan   : 3 line(s), left to right (blade 50 mm, reach 12.5 mm)
+  line 1    : X 53.24  Z 38.08  (part 1)
+  line 2    : X 90.00  Z 53.48  (part 2)
+  line 3    : X 145.99  Z 23.38  (part 3)
 ```
 
 Those X and Z values are the ones written into the G-code — the report and the
@@ -258,6 +326,15 @@ python -m pytest
 
 The suite is anchored on two real reference files:
 
+* **`test_profile.py`** — the looping machine profile: the JSON is built from
+  the readable source, the wall block waits for temperature before extruding,
+  stands where the stock purge lines did, is nine 0.2 mm layers to 1.8 mm, runs
+  the fan the way the 0.2 mm profile does, and ends with the wipe; the sweep
+  constants agree with it; and nothing in the start code reads as a layer
+  marker, so `split_gcode` keeps the whole wall on the start-code side.
+* **`test_purge_wall.py`** — the shove that closes the sweep: after the last
+  strip, to the wall's middle, forward past the lip, then the usual return; the
+  A1, whose profile prints no wall, keeps its sweep unchanged.
 * **`test_inplace.py`** — the primary. Its reference is
   `Gcode/test 2 blocks gcode/test 2 blocks mymod/Metadata/plate_1.gcode`, the
   slicer output in `test 2 blocks/` patched by hand (air purges + spliced eject
@@ -279,8 +356,15 @@ The suite is anchored on two real reference files:
   emitted in the last loop only, lift before the relative drop, and after the
   sweep but before the motors are switched off.
 * **`test_push_plan.py`** — the push planner: which parts share a line, that a
-  line comes down to the shortest part it pushes, that the lines run left to
-  right, and that the blade lifts clear before the bed comes back.
+  line pushes at the height of the shortest part it covers, that the lines run
+  left to right, and — walking the emitted moves — that the blade never descends
+  at a spot it has not already been to.
+* **`test_zpush.py`** — the press-and-swipe cycles: the four moves in order, the
+  2 mm of advance per cycle, Z back where it started each time, the approach that
+  stops short of the *measured* contact, and fewer cycles rather than moves past
+  the plate edge. The contact measurement itself — the bumper's band, the height
+  cut-off, a diagonal clipped to the band, a neighbour standing in the way — is in
+  `test_push_plan.py`.
 * **`test_parts.py`** — the part finder: parts standing close together, the skirt
   that loops around all of them, travel moves crossing the gaps, and the two
   in-repo plates, whose single part has to match the model's own bounding box.

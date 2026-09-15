@@ -1,8 +1,10 @@
 """The default ``inplace`` strategy, for the A1 Mini.
 
 Reference: ``Gcode/test 2 blocks gcode/test 2 blocks mymod/Metadata/plate_1.gcode``
-- the slicer output in ``test 2 blocks/`` with the purge lines turned into air
-purges and the eject sequence spliced into the machine end code by hand.
+- the slicer output in ``test 2 blocks/`` with the eject sequence spliced into
+the machine end code by hand.  (It also carries hand-made air purges in the
+start code, from the days pylooprint patched those in; the start code is the
+slicer's own now, so that part of the reference is no longer compared.)
 
 pylooprint has to produce the same *machine G-code* from the same slicer output.
 It does not reproduce the reference file byte for byte, because the loops are
@@ -19,14 +21,19 @@ import re
 import pytest
 
 from pylooprint.core.constants import END_CODE_START_MARKER, FEATURE_CUSTOM
-from pylooprint.core.patching import PatchError
 from pylooprint.core.project import ThreeMfProject
+from pylooprint.core.structure import split_gcode
 from pylooprint.pipeline import build_loops, detect_printer
-from pylooprint.printers import get_profile
 from pylooprint.printers.bedslinger import PUSH_PLAN_START
 from pylooprint.settings import LoopSettings
 
-from conftest import INPLACE_TEMP, without_final_park, without_push_block, without_release_hold
+from conftest import (
+    INPLACE_TEMP,
+    without_final_park,
+    without_purge_wall_sweep,
+    without_push_block,
+    without_release_hold,
+)
 
 _EXECUTABLE_END = "; EXECUTABLE_BLOCK_END"
 #: The loop assembler appends this after the start code; the reference file,
@@ -71,9 +78,10 @@ def test_printer_and_model_are_detected(golden_project):
 def test_machine_end_code_matches_the_reference(golden_project, inplace_reference):
     """The cool-down and the sweep are the reference file's, byte for byte.
 
-    Three blocks are cut out of both sides first, each pinned by its own tests:
+    Four blocks are cut out of both sides first, each pinned by its own tests:
     the hold with its push-off beep, the push - planned from the parts on the
-    plate rather than fixed - and the park that ends the last loop.
+    plate rather than fixed - the purge-wall shove that closes the sweep, and
+    the park that ends the last loop.
     """
     produced = _machine_end_code(_build(golden_project).gcode)
     expected = _machine_end_code(inplace_reference)
@@ -82,14 +90,20 @@ def test_machine_end_code_matches_the_reference(golden_project, inplace_referenc
 
 def _comparable(end_code: str) -> str:
     """The end code without the blocks that other tests pin."""
-    return without_final_park(without_push_block(without_release_hold(end_code)))
+    return without_purge_wall_sweep(
+        without_final_park(without_push_block(without_release_hold(end_code)))
+    )
 
 
-def test_machine_start_code_matches_the_reference(golden_project, inplace_reference):
-    """The patched start code is the reference file's, apart from Looprint's marker."""
+def test_machine_start_code_is_the_slicer_s_own(golden_project):
+    """Verbatim, apart from the tag on the feedrate reset Looprint owns.
+
+    The purge that looping needs is the looping profile's business now, so the
+    start code goes through untouched - even one from the stock profile.
+    """
+    project = ThreeMfProject.open(golden_project)
     produced = _machine_start_code(_build(golden_project).gcode)
-    expected = _machine_start_code(inplace_reference)
-    # Looprint tags the feedrate reset it owns; the hand-made reference has no tag.
+    expected = _SPEED_SCAFFOLD_RE.sub("", split_gcode(project.gcode).slicer_start_code.strip())
     assert produced.replace(" ;Reset Feedrate (Looprint: 100% speed)", " ;Reset Feedrate") == expected
 
 
@@ -106,15 +120,6 @@ def test_slicer_start_code_is_kept(golden_project):
     assert "M983 F8.39793 A0.3 H0.4; cali dynamic extrusion compensation" in gcode
     assert "; build plate detect" in gcode
     assert "FactorianDesigns" not in gcode
-
-
-def test_purge_lines_become_air_purges(golden_project):
-    gcode = _build(golden_project).gcode
-    assert gcode.count("G0 E50 F100") == 2
-    body = gcode[gcode.index("; EXECUTABLE_BLOCK_START") :]
-    # The line that used to be drawn across the front of the plate is gone.
-    assert "G0 X88 E10" not in body
-    assert "G0 X113 E.3742" not in body
 
 
 def test_slicer_end_code_is_kept_around_the_eject_sequence(golden_project):
@@ -150,14 +155,7 @@ def test_each_loop_repeats_the_whole_plate(golden_project, loops):
         assert gcode.count(f"; >>> LOOP {index} / {loops} <<<") == 1
     assert gcode.count("; EXECUTABLE_BLOCK_START") == loops
     assert gcode.count(PUSH_PLAN_START) == loops
-    assert gcode.count("G0 E50 F100") == 2 * loops
     # Header and settings dump only once.
     assert gcode.count("; HEADER_BLOCK_START") == 1
     assert gcode.count("; CONFIG_BLOCK_START") == 1
     assert gcode.count("M400 ; Looprint safety: Wait for buffer clear before next loop") == loops - 1
-
-
-def test_a_missing_anchor_is_reported_not_ignored():
-    profile = get_profile("a1mini")
-    with pytest.raises(PatchError):
-        profile.start_code_patches()[0].apply("G28\nG1 X10 Y10\n")

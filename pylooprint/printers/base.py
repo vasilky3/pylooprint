@@ -18,6 +18,7 @@ from ..core.parts import PartBounds
 from ..core.push_plan import PushLine
 from ..core.structure import GcodeStructure
 from ..core.template import render_start_code
+from ..errors import LooprintError
 from ..settings import LoopSettings
 
 _TEMPLATE_PACKAGE = "pylooprint.printers.templates"
@@ -66,6 +67,9 @@ class EndCodeContext:
     #: The separate parts on the plate, in report order.  Empty when the body
     #: could not be measured, which sends the push-off back to its one-line form.
     parts: tuple[PartBounds, ...] = ()
+    #: The push the pipeline planned from those parts - the same lines the report
+    #: names.  Empty sends a bed slinger back to planning its own.
+    push_lines: tuple[PushLine, ...] = ()
     #: Where an ordinary print of this plate would leave the head, read out of
     #: the slicer's own end code.  ``None`` when that file is shaped otherwise.
     slicer_park: SlicerPark | None = None
@@ -90,8 +94,10 @@ class PrinterProfile(ABC):
     temp_offset: int = 0
     #: How many ``M190`` lines are needed to outlast the firmware's wait timeout.
     m190_repeat: int = 1
-    #: Start-code template shipped for this machine.
-    start_template_name: str
+    #: Start-code template shipped for this machine, rendered by the default
+    #: :meth:`build_machine_code`.  ``None`` for a profile that keeps the
+    #: slicer's own start code instead and never renders one.
+    start_template_name: str | None = None
     #: The blade that pushes a part off: how wide the toolhead sweeps, in mm,
     #: and how much of that width has to sit over a part to carry it.  Their
     #: product is how far from a line a part may stand and still be pushed.
@@ -108,6 +114,10 @@ class PrinterProfile(ABC):
 
     def start_code(self) -> str:
         """Raw start-code template, before variable substitution."""
+        if self.start_template_name is None:
+            raise LooprintError(
+                f"{self.name} keeps the slicer's own start code and has no template to render"
+            )
         return load_template(self.start_template_name)
 
     def release_beep(self) -> str:
@@ -149,13 +159,17 @@ class PrinterProfile(ABC):
         """Notes the end-code generator produced - e.g. auto-adjusted push lanes."""
         return ()
 
-    def push_plan(self, parts: Sequence[PartBounds]) -> list[PushLine]:
+    def push_plan(self, parts: Sequence[PartBounds], print_body: str = "") -> list[PushLine]:
         """The lines the blade runs to sweep this plate, left to right.
 
         Empty for a profile whose push-off does not follow the parts - the
         CoreXY machines still push through the plate centre in three fixed
-        lanes.  The report and the G-code both read this, so neither can end up
-        describing a push the other does not make.
+        lanes.  Called once per build: the plan is reported and carried in the
+        context, so the report and the G-code cannot describe different pushes.
+
+        ``print_body`` lets a profile measure against the G-code itself rather
+        than against the parts' boxes; it is only handed over when something in
+        the plan needs that accuracy.
         """
         return []
 

@@ -85,7 +85,23 @@ def build_loops(
     # profile plans from it.  The end code asks the profile for the same plan,
     # so what is reported is what the printer will run.
     parts = find_parts(structure.print_body)
-    push_lines = profile.push_plan(parts)
+    # The press-and-swipe push needs to know where the blade really meets plastic,
+    # which only the G-code can say; the plain push works off the boxes alone, so
+    # it is not made to pay for that scan.
+    push_lines = profile.push_plan(parts, structure.print_body if settings.zpush else "")
+
+    blind = [
+        number
+        for number, line in enumerate(push_lines, start=1)
+        if settings.zpush and line.contact_y is None
+    ]
+    if blind:
+        warnings.append(
+            "no plastic stands under the bumper at the push height on push "
+            f"{'lines' if len(blind) > 1 else 'line'} "
+            + ", ".join(str(number) for number in blind)
+            + ": nothing there to work loose, so those lines push straight instead"
+        )
 
     bed = profile.bed_bounds
     placement = determine_model_placement(gcode, bed.min_x, bed.max_x, bed.min_y, bed.max_y)
@@ -97,6 +113,7 @@ def build_loops(
         model_min_x=placement.min_x,
         model_max_x=placement.max_x,
         parts=tuple(parts),
+        push_lines=tuple(push_lines),
         # Where this plate would leave the head if it were printed once, the
         # ordinary way.  The last loop finishes there.
         slicer_park=read_slicer_park(structure.slicer_end_code),

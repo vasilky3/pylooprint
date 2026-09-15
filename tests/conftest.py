@@ -35,8 +35,9 @@ RESULT_3MF = GCODE_DIR / "result.gcode.3mf"
 GOLDEN_TEMP = 58
 
 #: The hand-modified reference for the in-place strategy: the same slicer output
-#: as GOLDEN_SOURCE, with the purge lines turned into air purges and the eject
-#: sequence spliced into the machine end code. Built with a 28 C cool-down.
+#: as GOLDEN_SOURCE with the eject sequence spliced into the machine end code
+#: (and hand-made air purges in the start code, from before the looping profile
+#: took that over). Built with a 28 C cool-down.
 INPLACE_REFERENCE = SAMPLES / "test 2 blocks mymod" / "Metadata" / "plate_1.gcode"
 INPLACE_TEMP = 28
 
@@ -206,6 +207,20 @@ def without_final_park(code: str) -> str:
     start = code.index(start_marker)
     end = code.index(end_marker) + len(end_marker)
     return code[:start].rstrip("\n") + "\n" + code[end:].lstrip("\n")
+
+
+def without_purge_wall_sweep(code: str) -> str:
+    """Cut the two moves that shove the purge wall off the lip, if present.
+
+    The reference files were made before the looping profile printed a wall;
+    ``test_purge_wall.py`` pins the moves instead.
+    """
+    marker = ";----- purge wall: off the front lip on the way back -----"
+    if marker not in code:
+        return code
+    start = code.index(marker)
+    end = code.index("G1 Y185", start)  # the sweep's own final line, kept
+    return code[:start] + code[end:]
 
 
 def without_push_block(code: str) -> str:

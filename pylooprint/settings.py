@@ -35,3 +35,7 @@ class LoopSettings:
     loops: int = DEFAULT_LOOPS
     cooldown_temp: int = DEFAULT_TEMP
     hold_seconds: int = DEFAULT_HOLD_SECONDS
+    #: Work each part loose with press-and-swipe cycles before pushing it off,
+    #: instead of one straight shove.  The cycle is shaped by the ``ZPUSH_*``
+    #: constants in :mod:`pylooprint.printers.bedslinger`.
+    zpush: bool = False

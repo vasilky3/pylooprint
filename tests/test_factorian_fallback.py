@@ -24,7 +24,12 @@ from pylooprint.pipeline import build_loops, detect_printer
 from pylooprint.printers import EndCodeContext, PrinterProfile, get_profile
 from pylooprint.settings import LoopSettings
 
-from conftest import GOLDEN_TEMP, with_current_push_block, without_release_hold
+from conftest import (
+    GOLDEN_TEMP,
+    with_current_push_block,
+    without_purge_wall_sweep,
+    without_release_hold,
+)
 
 
 def test_bedslinger_end_code_matches_a_real_looped_file(result_3mf):
@@ -44,7 +49,7 @@ def test_bedslinger_end_code_matches_a_real_looped_file(result_3mf):
     produced = substitute_first_layer_centre(profile.end_code(context), centre_x, centre_y)
     produced = resolve_max_layer_z(produced, 18.12)
 
-    assert without_release_hold(produced) == expected
+    assert without_purge_wall_sweep(without_release_hold(produced)) == expected
 
 
 def test_unsupported_printer_takes_the_fallback_and_warns(golden_project):
