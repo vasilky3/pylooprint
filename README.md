@@ -34,12 +34,14 @@ looping:
   `profiles/` does the right thing itself: the calibration draw inside `M622 J1`
   becomes a short air purge (the A1 Mini's flow calibration measures pressure,
   it does not scan a line), and the second draw becomes a small **purge wall** —
-  waits for the first-layer nozzle temperature, purges 12 mm in the air, then
-  prints two lines along X68..98 on the front lip, 1.8 mm tall in nine 0.2 mm
-  layers, and ends by dragging the nozzle across the wall's top onto the plate
-  edge as a wipe. Written as plain G-code for the 0.2 mm profile, so it comes
-  out the same whatever print profile is selected. The only thing pylooprint
-  knows about the wall is where to shove it off at the end of the sweep.
+  waits for the first-layer nozzle temperature, purges 12 mm in the air with the
+  fan on, then prints two lines along X68..98 on the front lip, 1.8 mm tall in
+  nine 0.2 mm layers — the first without fan, the rest with it, like the 0.2 mm
+  profile prints a part — and ends by dragging the nozzle across the wall's top
+  onto the plate edge as a wipe, fan off again for the model's first layer.
+  Written as plain G-code for the 0.2 mm profile, so it comes out the same
+  whatever print profile is selected. The only thing pylooprint knows about
+  the wall is where to shove it off at the end of the sweep.
 * **The end code gets an eject sequence spliced in.** Everything the slicer does
   first (timelapse, filament unload, hotend off) is kept, the Z-lift is carried
   over, the gantry parks up against the mechanical switch at the top (Z184 —
@@ -236,7 +238,12 @@ python profiles/build_profile.py
 (a JSON string cannot hold line breaks, which is why the two exist). The test
 suite fails if the JSON is stale. If you move or resize the wall there, the two
 numbers pylooprint uses to shove it off — `PURGE_WALL_X` and `PURGE_SWEEP_Y` in
-`printers/a1_mini.py` — have to follow.
+`printers/a1_mini.py` — have to follow. One rule for comments in that file: none
+may look like a slicer's layer-change marker (`; layer ...`, `;LAYER_CHANGE`,
+`; CHANGE_LAYER`, `;Z_HEIGHT` — the patterns in `LAYER_MARKER_RE`), because
+pylooprint splits a plate at the first one it meets after the start of the
+custom feature; a wall comment that did once ended the start code mid-wall and
+put the rest of the wall on the part list. The suite checks this too.
 
 ---
 
@@ -321,8 +328,10 @@ The suite is anchored on two real reference files:
 
 * **`test_profile.py`** — the looping machine profile: the JSON is built from
   the readable source, the wall block waits for temperature before extruding,
-  stands where the stock purge lines did, is nine 0.2 mm layers to 1.8 mm, and
-  ends with the wipe; the sweep constants agree with it.
+  stands where the stock purge lines did, is nine 0.2 mm layers to 1.8 mm, runs
+  the fan the way the 0.2 mm profile does, and ends with the wipe; the sweep
+  constants agree with it; and nothing in the start code reads as a layer
+  marker, so `split_gcode` keeps the whole wall on the start-code side.
 * **`test_purge_wall.py`** — the shove that closes the sweep: after the last
   strip, to the wall's middle, forward past the lip, then the usual return; the
   A1, whose profile prints no wall, keeps its sweep unchanged.

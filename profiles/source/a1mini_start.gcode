@@ -411,19 +411,25 @@ M623 ; end of "draw extrinsic para cali paint"
 ; profile is selected.  pylooprint shoves it off the front lip at the end of every
 ; loop - see purge_wall_x / purge_sweep_y in pylooprint/printers/a1_mini.py, which
 ; have to agree with the X68..98 / Y-3.46..-3.04 below.
+; Comments in here must not look like a slicer's layer-change markers (the
+; word "layer" right after the semicolon, LAYER_CHANGE, CHANGE_LAYER, Z_HEIGHT):
+; pylooprint splits the file at the first one and would take the rest of the
+; wall for a part.  See LAYER_MARKER_RE in pylooprint/core/constants.py.
 M109 S{nozzle_temperature_initial_layer[initial_extruder]} ; first-layer temperature, before anything is extruded
+M106 S255 ; fan on for the purge
 G1 E12 F300 ; air purge over the chute - the head is at X-13.5 Z10
 M400
-M106 S255
+M106 S0 ; first pass without fan, as the 0.2 mm profile prints its first layer
 G90
 M83
 G0 X68 Y-3.04 Z10 F18000 ; the stock purge-line strip, in front of the plate
 G1 Z0.2 F3000
-G1 X98 E1.25 F1200 ; layer 1 at 0.5 mm line width
+G1 X98 E1.25 F1200 ; first pass, 0.5 mm wide as the 0.2 mm profile's first line
 G1 Y-3.46 E0.02
 G1 X68 E1.25
+M106 S255 ; fan for the rest of the wall
 G1 Z0.4 F3000
-G1 X98 E1.05 F1800 ; layers 2-9 at 0.42
+G1 X98 E1.05 F1800 ; 0.42 mm passes up to 1.8
 G1 Y-3.04 E0.01
 G1 X68 E1.05
 G1 Z0.6 F3000

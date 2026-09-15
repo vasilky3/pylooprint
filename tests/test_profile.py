@@ -21,6 +21,8 @@ sys.path.insert(0, str(ROOT / "profiles"))
 
 from build_profile import PROFILE, PROFILE_NAME, SOURCE, build, render  # noqa: E402
 
+from pylooprint.core.constants import EXECUTABLE_BLOCK_START, FEATURE_CUSTOM, LAYER_MARKER_RE  # noqa: E402
+from pylooprint.core.structure import split_gcode  # noqa: E402
 from pylooprint.printers.a1_mini import PURGE_SWEEP_Y, PURGE_WALL_X  # noqa: E402
 
 WALL_START = ";===== LOOPRINT PURGE WALL ====="
@@ -54,7 +56,8 @@ def test_the_profile_is_the_user_s_own_not_the_system_one(profile):
     """Same name as the stock preset and Orca refuses it as a duplicate."""
     assert profile["name"] == PROFILE_NAME
     assert profile["from"] == "User"
-    assert profile["printer_model"] == "Bambu Lab A1 mini"
+    assert profile["inherits"] == "Bambu Lab A1 mini 0.4 nozzle"
+    assert profile["printer_settings_id"] == PROFILE_NAME
 
 
 def test_the_stock_purge_draws_are_gone(source):
@@ -109,6 +112,53 @@ def test_every_line_is_extruded_for_the_0_2_profile(wall):
     assert len(lines) == 18  # two per layer
     assert [words[2] for words in lines[:2]] == ["E1.25", "E1.25"]
     assert all(words[2] == "E1.05" for words in lines[2:])
+
+
+def test_the_fan_follows_the_0_2_profile(wall):
+    """On for the air purge, off for the first pass, on for the rest, off before the model."""
+    commands = [line.split(";")[0].strip() for line in wall if not line.startswith(";")]
+    fans = [(i, c) for i, c in enumerate(commands) if c.startswith("M106")]
+    purge = commands.index("G1 E12 F300")
+    first_pass = commands.index("G1 Z0.2 F3000")
+    second_pass = commands.index("G1 Z0.4 F3000")
+    wipe = commands.index("G1 Y0 F18000")
+
+    assert [c for _, c in fans] == ["M106 S255", "M106 S0", "M106 S255", "M106 S0"]
+    on_for_purge, off_for_first, on_for_rest, off_for_model = (i for i, _ in fans)
+    assert on_for_purge < purge < off_for_first < first_pass
+    assert first_pass < on_for_rest < second_pass
+    assert wipe < off_for_model == len(commands) - 1
+
+
+def test_nothing_in_the_start_code_looks_like_a_layer_marker(source):
+    """pylooprint splits a plate at the first layer marker after the custom-feature line.
+
+    A wall comment that reads like one ("; layer 1 ...") once ended the start
+    code mid-wall: the rest of the wall became print body, was reported as a
+    part and pulled the push plan towards it.
+    """
+    assert LAYER_MARKER_RE.search(source) is None
+
+    plate = "\n".join(
+        [
+            "; HEADER",
+            EXECUTABLE_BLOCK_START,
+            "M73 P0 R10",
+            FEATURE_CUSTOM,
+            source,
+            "; CHANGE_LAYER",
+            "; Z_HEIGHT: 0.2",
+            "G1 X10 Y10 E1",
+            ";===== date: 20231229 =====================",
+            "M400",
+            "",
+        ]
+    )
+    structure = split_gcode(plate)
+    assert WALL_END in structure.slicer_start_code
+    assert structure.slicer_start_code.endswith("M1007 S1")
+    assert "X98" not in structure.print_body
+    assert structure.print_body.startswith("; CHANGE_LAYER")
 
 
 def test_the_wall_ends_with_a_wipe_not_a_lift(wall):
