@@ -421,7 +421,7 @@ M400
 M106 S0 ; first pass without fan, as the 0.2 mm profile prints its first layer
 G90
 M83
-G0 X64 Y-3.04 Z10 F18000 ; the stock purge-line strip, in front of the plate
+G0 X66 Y-3.04 Z10 F18000 ; the stock purge-line strip, in front of the plate
 G1 Z0.2 F3000
 G1 X98 E1.25 F1800 ; first pass, 0.5 mm wide as the 0.2 mm profile's first line
 G1 Y-3.46 E0.02
