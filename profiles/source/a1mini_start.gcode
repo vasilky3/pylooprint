@@ -459,8 +459,12 @@ G1 Z1.8 F3000
 G1 X98 E1.05 F1800
 G1 Y-3.46 E0.01
 M106 S0 ; last line without fan
-G1 X68 E1.05
-G1 Y0 F18000 ; no lift: drag the nozzle back across the wall's top and onto the plate edge - that is the wipe
+G1 X68 E0.9 ; less extrusion
+; swipe + wait on top of the wall
+G1 Z1.9
+G1 E-0.8 F1800 ; retract
+G1 Y-3.04
+G1 X83 Z1.8 ; close the nozzle by pushing in-to wall
 ;===== LOOPRINT PURGE WALL END =====
 M400
 
@@ -491,5 +495,7 @@ T1000
 M211 X0 Y0 Z0 ;turn off soft endstop
 M1007 S1
 
-
+G1 E0.8 F1800 ;return retract
+G4 P100        ; pause 0.1 с, pressure buildup
+G1 Z2.1 E0.1 F20000 ; open nozzle. At the end - right before print starts
 

@@ -27,7 +27,7 @@ WIGGLE_SPEED = 2000
 PUSH_END_Y = -0.5
 PUSH_SPEED = 300
 
-# --- the press-and-swipe push (--zpush) ------------------------------------
+# --- the press-and-swipe push (the default; --simplepush turns it off) -----
 #: Distance from nozzle to front line of bumper.
 ZPUSH_BUMPER_POSITION_MM = 0.0
 #: Where the blade stops on its way to the part, short of touching it, in mm.
@@ -146,7 +146,8 @@ class BedSlingerProfile(PrinterProfile):
             for index, line in enumerate(lines, start=1)
         ]
         blocks.append(
-            "G1 Z1 F600\t\t;move nozzle closer to the bed for the sweep\n"
+            f"G1 Z{to_fixed(self.push_min_z, 2)} F600"
+            "\t\t;the sweep and the purge-wall shove run at the travel height\n"
             f"{PUSH_PLAN_END}\n"
         )
         return "\n".join(blocks)
@@ -323,10 +324,10 @@ class BedSlingerProfile(PrinterProfile):
     def final_park(self, context: EndCodeContext) -> str:
         """Put the head back where an ordinary print of this plate leaves it.
 
-        The slicer's own lift comes first: the sweep ends a millimetre above the
-        plate, and the park it copies finishes with a *relative* Z move, which
-        from there would drive the nozzle into the plate instead of down to just
-        under the lift height.
+        The slicer's own lift comes first: the sweep ends at the travel height,
+        0.2 mm above the plate, and the park it copies finishes with a
+        *relative* Z move, which from there would drive the nozzle into the
+        plate instead of down to just under the lift height.
 
         Empty when the file carries no park to copy - better to leave the head
         where the sweep put it than to invent a position for a machine whose end

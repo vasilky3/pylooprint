@@ -76,12 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--zpush",
-        "-zpush",
+        "-s",
+        "--simplepush",
         action="store_true",
         help=(
-            "A1/A1 Mini: work each part loose with press-and-swipe cycles before pushing it "
-            "off, instead of one straight shove (tune the cycle in printers/bedslinger.py)"
+            "A1/A1 Mini: push each part off with one straight shove, instead of the default "
+            "press-and-swipe cycles that work it loose first (tune the cycle in printers/bedslinger.py)"
         ),
     )
     parser.add_argument("--dry-run", action="store_true", help="report what would be built without writing a file")
@@ -121,7 +121,7 @@ def _run(args: argparse.Namespace) -> tuple[BuildResult, Path]:
     profile = get_profile(args.printer) if args.printer else detect_printer(project)
 
     settings = LoopSettings(
-        loops=args.loops, cooldown_temp=args.temp, hold_seconds=args.hold, zpush=args.zpush
+        loops=args.loops, cooldown_temp=args.temp, hold_seconds=args.hold, zpush=not args.simplepush
     )
 
     result = build_loops(project, profile, settings, source_name=args.input.name)
@@ -199,6 +199,8 @@ def _report_push_plan(result: BuildResult, zpush: bool) -> None:
             f"(approach {ZPUSH_APPROACH_MM:.1f}, press {ZPUSH_PRESS_MM:.1f}, "
             f"swipe {ZPUSH_SWIPE_MM:.1f} mm)"
         )
+    else:
+        print("push mode   : simple push, one straight shove per line (--simplepush)")
 
 
 def _report(args: argparse.Namespace, result: BuildResult, destination: Path) -> None:
@@ -208,7 +210,7 @@ def _report(args: argparse.Namespace, result: BuildResult, destination: Path) ->
     if result.placement:
         print(f"placement   : {result.placement.direction} (X {result.placement.min_x:.1f}..{result.placement.max_x:.1f})")
     _report_parts(result.parts)
-    _report_push_plan(result, args.zpush)
+    _report_push_plan(result, not args.simplepush)
     print(f"cool-down   : {args.temp} C -> commanded {result.profile.apply_temp_offset(args.temp)} C")
     wait = f"{args.hold} s, then the push-off beep" if args.hold else "no wait, push-off beep only"
     print(f"hold        : {wait}")

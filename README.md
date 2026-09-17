@@ -66,8 +66,9 @@ looping:
   above — and only goes *up* once it is standing on its line. After the push the
   bed comes back along the band just swept, at the same height, and the blade
   drops again only there. Every move retraces a path already proven clear.
-* **`--zpush` works each part loose first.** Parts release better with a Z
-  component than with a straight shove, so this mode stops just short of the
+* **The push works each part loose first** (`-s`/`--simplepush` brings back the
+  one straight shove). Parts release better with a Z component than with a
+  straight shove, so the default push stops just short of the
   first plastic the blade will meet — *measured in the G-code*, as the back edge
   of whatever stands inside the bumper's width (the same `blade_width × overlap`
   reach the grouping uses) at or above the height the blade pushes at, which is
@@ -96,8 +97,8 @@ looping:
   The slicer's own lift and park moves are read out of the file the plate came
   in — `G1 X-13 Y180` on the A1 Mini, with a Z that follows the part (its height
   plus 100 mm, capped at the machine's ceiling) — and replayed once the last part
-  is off the plate, lift first, since the sweep leaves the nozzle a millimetre
-  above it. The copies before the last one do not bother: the next one starts by
+  is off the plate, lift first, since the sweep leaves the nozzle 0.2 mm above
+  it. The copies before the last one do not bother: the next one starts by
   homing anyway.
 * **Every printer beeps right before it pushes** — one short `M1006` tone, the
   same macro the slicer's finish sound uses. The machine has been standing still
@@ -187,7 +188,7 @@ What genuinely differs per machine:
 | Blade / overlap | 55 mm × 0.5 | 50 mm × 0.25 | declared, unused | declared, unused |
 | Bumper ahead of nozzle | not measured (0) | 30 mm | — | — |
 | Push lines | one per part or X band | one per part or X band | 3 fixed lanes | 3 fixed lanes |
-| Sweep | wiggle, 6 positions | wiggle, 4 positions | — | — |
+| Sweep | wiggle, 6 positions, at Z0.2 | wiggle, 4 positions, at Z0.2 | — | — |
 | Release hold | yes | yes | — | — |
 | Push-off beep | yes | yes | yes | yes |
 | Eject keep-out | — | X 0–15, Y 150–180 | — | — |
@@ -262,8 +263,8 @@ puts it on your PATH while still running the files in this folder (undo with
 |---|---------------------------------|---|
 | `-n, --loops` | 1                               | how many copies |
 | `-t, --temp` | 26                              | bed temperature to cool down to before the push-off |
-| `--hold` | 300                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
-| `--zpush` | off | A1/A1 Mini: work each part loose with press-and-swipe cycles before pushing it off (`-zpush` also works; the cycle is tuned by the `ZPUSH_*` constants in `printers/bedslinger.py`) |
+| `--hold` | 400                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
+| `-s, --simplepush` | off | A1/A1 Mini: push each part off with one straight shove instead of the default press-and-swipe cycles that work it loose first (the cycle is tuned by the `ZPUSH_*` constants in `printers/bedslinger.py`) |
 | `-p, --printer` | auto                            | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
 | `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |
 | `--dry-run` | off                             | report without writing |
@@ -359,7 +360,7 @@ The suite is anchored on two real reference files:
   line pushes at the height of the shortest part it covers, that the lines run
   left to right, and — walking the emitted moves — that the blade never descends
   at a spot it has not already been to.
-* **`test_zpush.py`** — the press-and-swipe cycles: the four moves in order, the
+* **`test_zpush.py`** — the press-and-swipe cycles, the default push: the four moves in order, the
   2 mm of advance per cycle, Z back where it started each time, the approach that
   stops short of the *measured* contact, and fewer cycles rather than moves past
   the plate edge. The contact measurement itself — the bumper's band, the height

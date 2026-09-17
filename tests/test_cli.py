@@ -60,9 +60,10 @@ def test_reports_the_planned_push_lines(cone_multi_project, tmp_path, capsys):
 
     The figures themselves are the machine's tuning, so they are read back from
     the planner rather than written out here - what this pins is that the report
-    names the same push the G-code will run.
+    names the same push the G-code will run.  With the simple push, so that the
+    lines carry no contact Y - the z-push report is pinned below.
     """
-    main([str(cone_multi_project), "--dry-run", "-o", str(tmp_path / "x.3mf")])
+    main([str(cone_multi_project), "-s", "--dry-run", "-o", str(tmp_path / "x.3mf")])
 
     project = ThreeMfProject.open(cone_multi_project)
     profile = detect_printer(project)
@@ -80,9 +81,8 @@ def test_reports_the_planned_push_lines(cone_multi_project, tmp_path, capsys):
         ) in out
 
 
-@pytest.mark.parametrize("flag", ["--zpush", "-zpush"])
-def test_the_zpush_mode_is_reported(cone_multi_project, tmp_path, capsys, flag):
-    main([str(cone_multi_project), flag, "--dry-run", "-o", str(tmp_path / "x.3mf")])
+def test_the_zpush_mode_is_the_default_and_is_reported(cone_multi_project, tmp_path, capsys):
+    main([str(cone_multi_project), "--dry-run", "-o", str(tmp_path / "x.3mf")])
 
     out = capsys.readouterr().out
     assert (
@@ -94,10 +94,20 @@ def test_the_zpush_mode_is_reported(cone_multi_project, tmp_path, capsys, flag):
     assert "contact Y" in out
 
 
-def test_without_the_flag_no_push_mode_is_reported(cone_multi_project, tmp_path, capsys):
-    main([str(cone_multi_project), "--dry-run", "-o", str(tmp_path / "x.3mf")])
+@pytest.mark.parametrize("flag", ["-s", "--simplepush"])
+def test_the_simple_push_is_reported(cone_multi_project, tmp_path, capsys, flag):
+    main([str(cone_multi_project), flag, "--dry-run", "-o", str(tmp_path / "x.3mf")])
 
-    assert "push mode" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "push mode   : simple push, one straight shove per line" in out
+    assert "z-push" not in out
+    assert "contact Y" not in out
+
+
+def test_the_old_zpush_flag_is_gone(cone_multi_project, tmp_path):
+    """It is the default now; the flag would only ever have been a no-op."""
+    with pytest.raises(SystemExit):
+        main([str(cone_multi_project), "--zpush", "--dry-run", "-o", str(tmp_path / "x.3mf")])
 
 
 def test_rejects_out_of_range_settings(result_3mf, capsys):

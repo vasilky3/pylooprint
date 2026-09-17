@@ -9,6 +9,9 @@ forward past the lip so the wall is hit broadside.
 
 from __future__ import annotations
 
+import re
+
+from pylooprint.core.parts import PartBounds
 from pylooprint.printers import EndCodeContext, get_profile
 from pylooprint.printers.a1_mini import PURGE_SWEEP_Y, PURGE_WALL_X
 from pylooprint.settings import LoopSettings
@@ -60,3 +63,17 @@ def test_the_shove_is_in_the_end_code_of_every_loop():
 
     assert code.count(SHOVE_MARKER) == 1
     assert code.index(SHOVE_MARKER) < code.rindex("G1 Y185 F2000 ;move bed forward one last time")
+
+
+def test_the_sweep_and_the_shove_run_at_the_travel_height():
+    """The strips and the shove inherit the Z the push block ends on: 0.2, not 1."""
+    profile = get_profile("a1mini")
+    part = PartBounds(45.0, 55.0, 60.0, 100.0, 0.2, 30.0)
+    context = EndCodeContext(settings=LoopSettings(loops=1, cooldown_temp=23), parts=(part,))
+    code = profile.end_code(context)
+
+    strips = code.index("G1 Y135 F2000")
+    z_moves = re.findall(r"^G[01] Z([\d.]+)", code[:strips], flags=re.MULTILINE)
+    assert float(z_moves[-1]) == profile.push_min_z == 0.2
+    # Nothing between the first strip and the shove touches Z.
+    assert not re.search(r"^G[01] [^;]*Z", code[strips : code.index(SHOVE_MARKER)], flags=re.MULTILINE)
