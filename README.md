@@ -263,7 +263,7 @@ puts it on your PATH while still running the files in this folder (undo with
 |---|---------------------------------|---|
 | `-n, --loops` | 1                               | how many copies |
 | `-t, --temp` | 26                              | bed temperature to cool down to before the push-off |
-| `--hold` | 500                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
+| `--hold` | 400                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
 | `-s, --simplepush` | off | A1/A1 Mini: push each part off with one straight shove instead of the default press-and-swipe cycles that work it loose first (the cycle is tuned by the `ZPUSH_*` constants in `printers/bedslinger.py`) |
 | `-p, --printer` | auto                            | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
 | `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |

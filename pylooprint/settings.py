@@ -25,7 +25,7 @@ COOLDOWN_WARNING_THRESHOLD = 35
 #: the beep and the push-off.  Zero skips the wait; the beep always sounds.
 MIN_HOLD_SECONDS = 0
 MAX_HOLD_SECONDS = 3600
-DEFAULT_HOLD_SECONDS = 500
+DEFAULT_HOLD_SECONDS = 400
 
 
 @dataclass(frozen=True)
