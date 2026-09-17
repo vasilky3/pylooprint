@@ -24,4 +24,4 @@ M400 ; Wait for push to complete before next move
 
 ;======== Push off complete, start safety clear / side push off ======
 G1 Y180 F800	;move bed forward again (A1: Y262, A1 Mini: Y180)
-G1 Z1 F600		;move nozzle closer to the bed when using tall parts
+G1 Z@PUSH_MIN_Z@ F600		;down to the travel height for the sweep

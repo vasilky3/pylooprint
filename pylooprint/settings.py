@@ -25,7 +25,7 @@ COOLDOWN_WARNING_THRESHOLD = 35
 #: the beep and the push-off.  Zero skips the wait; the beep always sounds.
 MIN_HOLD_SECONDS = 0
 MAX_HOLD_SECONDS = 3600
-DEFAULT_HOLD_SECONDS = 300
+DEFAULT_HOLD_SECONDS = 500
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,8 @@ class LoopSettings:
     loops: int = DEFAULT_LOOPS
     cooldown_temp: int = DEFAULT_TEMP
     hold_seconds: int = DEFAULT_HOLD_SECONDS
-    #: Work each part loose with press-and-swipe cycles before pushing it off,
-    #: instead of one straight shove.  The cycle is shaped by the ``ZPUSH_*``
-    #: constants in :mod:`pylooprint.printers.bedslinger`.
-    zpush: bool = False
+    #: Work each part loose with press-and-swipe cycles before pushing it off -
+    #: the default; ``--simplepush`` turns it off for one straight shove.  The
+    #: cycle is shaped by the ``ZPUSH_*`` constants in
+    #: :mod:`pylooprint.printers.bedslinger`.
+    zpush: bool = True

@@ -1,6 +1,7 @@
-"""``--zpush``: work each part loose before pushing it off.
+"""The press-and-swipe push: work each part loose before pushing it off.
 
-A straight shove asks the plate to let go all at once.  The z-push instead stops
+This is the default; ``--simplepush`` brings back the one straight shove.  A
+straight shove asks the plate to let go all at once.  The z-push instead stops
 just short of the part and then presses and swipes at it - forward and up
 together, which scoops under the part - coming back and down again each time, so
 the blade bites ``ZPUSH_PRESS_MM`` deeper per cycle.  The ordinary push then
@@ -190,12 +191,17 @@ def test_the_push_still_finishes_at_the_plate_edge():
         "G1 Y180 F800\t; bed back along the band just swept, at the same height",
         "G1 Z0.20 F600\t; back to the travel height,"
         " at a point the nozzle has already been",
-        "G1 Z1 F600\t\t;move nozzle closer to the bed for the sweep",
+        "G1 Z0.20 F600\t\t;the sweep and the purge-wall shove run at the travel height",
     ]
     assert moves[-4] == pushes[0]
 
 
-def test_without_the_flag_the_push_is_one_straight_shove():
+def test_the_press_and_swipe_push_is_the_default():
+    assert LoopSettings().zpush is True
+
+
+def test_the_simple_push_is_one_straight_shove():
+    """``--simplepush``: no approach, no cycles - the bed just drives forward."""
     moves = _push_block(_part(50, 30), zpush=False)
 
     assert [line.split(";")[0].strip() for line in moves] == [
@@ -205,7 +211,7 @@ def test_without_the_flag_the_push_is_one_straight_shove():
         "G1 Y-0.5 F300",
         "G1 Y180 F800",
         "G1 Z0.20 F600",
-        "G1 Z1 F600",
+        "G1 Z0.20 F600",
     ]
 
 

@@ -180,6 +180,11 @@ _PUSH_BLOCK_UPDATES = (
         "but we add it for safety\n",
         "",
     ),
+    # The sweep used to run a millimetre up; it runs at the travel height now.
+    (
+        "G1 Z1 F600\t\t;move nozzle closer to the bed when using tall parts\n",
+        "G1 Z0.2 F600\t\t;down to the travel height for the sweep\n",
+    ),
 )
 
 

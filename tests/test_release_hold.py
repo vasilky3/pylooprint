@@ -53,7 +53,7 @@ def test_the_block_sits_between_the_cool_down_and_the_push_off(key):
 
 
 def test_the_default_wait_is_five_minutes():
-    assert DEFAULT_HOLD_SECONDS == 300
+    assert DEFAULT_HOLD_SECONDS == 500
     assert f"G4 S{DEFAULT_HOLD_SECONDS} ; hold before the push-off" in _end_code()
 
 

@@ -104,7 +104,7 @@ def test_the_park_carries_the_slicer_s_own_numbers(cone_multi_project):
 
 
 def test_the_lift_comes_before_the_relative_drop(cone_multi_project):
-    """The sweep ends at Z1, where a relative ``G1 Z-1`` would hit the plate."""
+    """The sweep ends at Z0.2, where a relative ``G1 Z-1`` would hit the plate."""
     block = _park_block(_build(cone_multi_project))
     lines = [line for line in block.split("\n") if not line.startswith(";")]
 

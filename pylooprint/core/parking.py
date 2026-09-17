@@ -6,7 +6,7 @@ the part (its height plus 100 mm, capped at the machine's own ceiling).
 
 Looping replaces that whole stretch of the end code with the eject sequence, so
 without carrying these moves over the job would finish wherever the sweep left
-the head: a millimetre above the plate.  Both halves are read straight out of
+the head: 0.2 mm above the plate.  Both halves are read straight out of
 the file rather than written here, which is what makes the parked position the
 *same* one an unlooped print reaches, on any plate.
 """
