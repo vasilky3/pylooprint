@@ -13,6 +13,10 @@
 		"PLP Bambu PLA Matte @BBL A1M"
 	],
 	"from": "User",
+	"compatible_printers": [
+		"Bambu Lab A1 mini 0.4 nozzle",
+		"PLP BBL A1 mini 0.4 nozzle"
+	],
 	"hot_plate_temp": [
 		"65"
 	],

@@ -75,6 +75,21 @@ def test_process_and_filament_profiles_declare_a_cli_config_type(relative, expec
     assert data["type"] == expected
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "process/0.20mm PLP Common @BBL A1M.json",
+        "process/0.20mm PLP Flat @BBL A1M.json",
+        "filament/PLP Bambu PLA Matte @BBL A1M.json",
+    ],
+)
+def test_process_and_filament_profiles_are_compatible_with_the_looping_machine(relative):
+    """Orca CLI exits -17 (process not compatible) if compatible_printers omits the machine."""
+    data = json.loads((ROOT / "profiles" / relative).read_text(encoding="utf-8"))
+    assert "Bambu Lab A1 mini 0.4 nozzle" in data["compatible_printers"]
+    assert PROFILE_NAME in data["compatible_printers"]
+
+
 def test_the_stock_purge_draws_are_gone(source):
     """Both calibration lines used to be drawn on the strip in front of the plate."""
     assert "G0 X68 Y-4 F30000" not in source

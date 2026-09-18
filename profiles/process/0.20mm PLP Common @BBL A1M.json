@@ -6,6 +6,10 @@
 	"enable_support": "1",
 	"from": "User",
 	"inherits": "0.20mm Standard @BBL A1M",
+	"compatible_printers": [
+		"Bambu Lab A1 mini 0.4 nozzle",
+		"PLP BBL A1 mini 0.4 nozzle"
+	],
 	"initial_layer_acceleration": "100",
 	"initial_layer_speed": "30",
 	"name": "0.20mm PLP Common @BBL A1M",
