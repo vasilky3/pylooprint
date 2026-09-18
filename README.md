@@ -229,6 +229,12 @@ G-code does its purging in a way that survives looping (see above). A plate
 sliced with the stock profile still builds; it just draws the stock purge lines
 on the front lip instead of the wall, and the same sweep move clears them.
 
+Headless Orca / Bambu Studio (`--load-settings`, `--load-filaments`) also needs
+a top-level `"type"` of `machine`, `process`, or `filament`. Bambu Studio's user
+exports omit it, and the CLI then exits with `unknown config type`. The machine
+JSON gets `"type": "machine"` from `build_profile.py`; keep the same field on
+the process and filament JSON in `profiles/`.
+
 The file to edit is `profiles/source/a1mini_start.gcode`, one command per line;
 the JSON is written from it by
 

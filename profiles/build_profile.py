@@ -25,14 +25,21 @@ PROFILE = HERE / "machine" / "PLP BBL A1 mini 0.4 nozzle.json"
 #: or Orca sees a second "Bambu Lab A1 mini 0.4 nozzle" and refuses it.
 PROFILE_NAME = "PLP BBL A1 mini 0.4 nozzle"
 
+#: Orca CLI ``--load-settings`` reads this field and rejects an empty type with
+#: ``unknown config type``. Bambu Studio user exports omit it.
+PROFILE_TYPE = "machine"
+
 
 def build(profile: dict, start_gcode: str) -> dict:
     """The profile with the start G-code and identity fields replaced."""
-    updated = dict(profile)
-    updated["name"] = PROFILE_NAME
-    updated["from"] = "User"
-    updated["machine_start_gcode"] = start_gcode
-    return updated
+    updated = {key: value for key, value in profile.items() if key != "type"}
+    return {
+        "type": PROFILE_TYPE,
+        **updated,
+        "name": PROFILE_NAME,
+        "from": "User",
+        "machine_start_gcode": start_gcode,
+    }
 
 
 def render(profile: dict) -> str:

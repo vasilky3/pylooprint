@@ -19,7 +19,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "profiles"))
 
-from build_profile import PROFILE, PROFILE_NAME, SOURCE, build, render  # noqa: E402
+from build_profile import PROFILE, PROFILE_NAME, PROFILE_TYPE, SOURCE, build, render  # noqa: E402
 
 from pylooprint.core.constants import EXECUTABLE_BLOCK_START, FEATURE_CUSTOM, LAYER_MARKER_RE  # noqa: E402
 from pylooprint.core.structure import split_gcode  # noqa: E402
@@ -54,10 +54,25 @@ def test_the_json_is_built_from_the_source(profile, source):
 
 def test_the_profile_is_the_user_s_own_not_the_system_one(profile):
     """Same name as the stock preset and Orca refuses it as a duplicate."""
+    assert profile["type"] == PROFILE_TYPE
     assert profile["name"] == PROFILE_NAME
     assert profile["from"] == "User"
     assert profile["inherits"] == "Bambu Lab A1 mini 0.4 nozzle"
     assert profile["printer_settings_id"] == PROFILE_NAME
+
+
+@pytest.mark.parametrize(
+    "relative, expected",
+    [
+        ("process/0.20mm PLP Common @BBL A1M.json", "process"),
+        ("process/0.20mm PLP Flat @BBL A1M.json", "process"),
+        ("filament/PLP Bambu PLA Matte @BBL A1M.json", "filament"),
+    ],
+)
+def test_process_and_filament_profiles_declare_a_cli_config_type(relative, expected):
+    """Orca CLI ``--load-settings`` / ``--load-filaments`` reject an empty type."""
+    data = json.loads((ROOT / "profiles" / relative).read_text(encoding="utf-8"))
+    assert data["type"] == expected
 
 
 def test_the_stock_purge_draws_are_gone(source):

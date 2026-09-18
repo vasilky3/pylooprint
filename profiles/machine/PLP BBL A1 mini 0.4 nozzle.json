@@ -1,4 +1,5 @@
 {
+	"type": "machine",
 	"from": "User",
 	"inherits": "Bambu Lab A1 mini 0.4 nozzle",
 	"name": "PLP BBL A1 mini 0.4 nozzle",
