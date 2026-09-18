@@ -233,9 +233,7 @@ Headless Orca / Bambu Studio (`--load-settings`, `--load-filaments`) also needs
 a top-level `"type"` of `machine`, `process`, or `filament`. Bambu Studio's user
 exports omit it, and the CLI then exits with `unknown config type`. The machine
 JSON gets `"type": "machine"` from `build_profile.py`; keep the same field on
-the process and filament JSON in `profiles/`. Process and filament JSON also
-need `compatible_printers` listing both `Bambu Lab A1 mini 0.4 nozzle` and
-`PLP BBL A1 mini 0.4 nozzle`, or the CLI exits with return -17.
+the process and filament JSON in `profiles/`.
 
 The file to edit is `profiles/source/a1mini_start.gcode`, one command per line;
 the JSON is written from it by
