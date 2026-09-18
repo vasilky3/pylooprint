@@ -29,11 +29,6 @@ PROFILE_NAME = "PLP BBL A1 mini 0.4 nozzle"
 #: ``unknown config type``. Bambu Studio user exports omit it.
 PROFILE_TYPE = "machine"
 
-#: Stock Bambu common snippet. Orca CLI validate() exits -51 when relative E
-#: is on and neither before_layer_change_gcode nor layer_change_gcode resets
-#: the extruder. User overlays do not inherit the parent snippet.
-BEFORE_LAYER_CHANGE_GCODE = ";BEFORE_LAYER_CHANGE\nG92 E0\n;[layer_z]\n"
-
 
 def build(profile: dict, start_gcode: str) -> dict:
     """The profile with the start G-code and identity fields replaced."""
@@ -44,7 +39,6 @@ def build(profile: dict, start_gcode: str) -> dict:
         "name": PROFILE_NAME,
         "from": "User",
         "machine_start_gcode": start_gcode,
-        "before_layer_change_gcode": BEFORE_LAYER_CHANGE_GCODE,
     }
 
 
