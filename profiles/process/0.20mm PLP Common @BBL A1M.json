@@ -1,5 +1,4 @@
 {
-	"type": "process",
 	"bottom_solid_infill_flow_ratio": "0.8",
 	"brim_type": "no_brim",
 	"detect_narrow_internal_solid_infill": "0",
