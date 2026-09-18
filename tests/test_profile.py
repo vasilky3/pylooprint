@@ -19,7 +19,15 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "profiles"))
 
-from build_profile import PROFILE, PROFILE_NAME, PROFILE_TYPE, SOURCE, build, render  # noqa: E402
+from build_profile import (  # noqa: E402
+    BEFORE_LAYER_CHANGE_GCODE,
+    PROFILE,
+    PROFILE_NAME,
+    PROFILE_TYPE,
+    SOURCE,
+    build,
+    render,
+)
 
 from pylooprint.core.constants import EXECUTABLE_BLOCK_START, FEATURE_CUSTOM, LAYER_MARKER_RE  # noqa: E402
 from pylooprint.core.structure import split_gcode  # noqa: E402
@@ -59,6 +67,8 @@ def test_the_profile_is_the_user_s_own_not_the_system_one(profile):
     assert profile["from"] == "User"
     assert profile["inherits"] == "Bambu Lab A1 mini 0.4 nozzle"
     assert profile["printer_settings_id"] == PROFILE_NAME
+    assert profile["before_layer_change_gcode"] == BEFORE_LAYER_CHANGE_GCODE
+    assert "G92 E0" in profile["before_layer_change_gcode"].splitlines()
 
 
 @pytest.mark.parametrize(

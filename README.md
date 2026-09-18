@@ -235,7 +235,9 @@ exports omit it, and the CLI then exits with `unknown config type`. The machine
 JSON gets `"type": "machine"` from `build_profile.py`; keep the same field on
 the process and filament JSON in `profiles/`. Process and filament JSON also
 need `compatible_printers` listing both `Bambu Lab A1 mini 0.4 nozzle` and
-`PLP BBL A1 mini 0.4 nozzle`, or the CLI exits with return -17.
+`PLP BBL A1 mini 0.4 nozzle`, or the CLI exits with return -17. The machine
+JSON also needs `before_layer_change_gcode` with `G92 E0` on its own line
+(relative extrusion), or the CLI exits with return -51.
 
 The file to edit is `profiles/source/a1mini_start.gcode`, one command per line;
 the JSON is written from it by
