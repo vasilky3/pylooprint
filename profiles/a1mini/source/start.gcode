@@ -409,7 +409,7 @@ M623 ; end of "draw extrinsic para cali paint"
 ; A 30 mm two-line wall, 1.8 mm tall, on the strip the stock purge lines used.
 ; Written for the 0.2 mm / 0.42 mm profile so it prints the same whatever print
 ; profile is selected.  pylooprint shoves it off the front lip at the end of every
-; loop - see purge_wall_x / purge_sweep_y in pylooprint/printers/a1_mini.py, which
+; loop - see purge_wall_x / purge_sweep_y in pylooprint/printers/a1mini/profile.py, which
 ; have to agree with the X68..98 / Y-3.46..-3.04 below.
 ; Comments in here must not look like a slicer's layer-change markers (the
 ; word "layer" right after the semicolon, LAYER_CHANGE, CHANGE_LAYER, Z_HEIGHT):

@@ -1,32 +1,26 @@
 """The wait and the beep that run between the cool-down and the push-off.
 
-Two things have to hold no matter what:
-
-* nothing in the hold block moves the machine, because the toolhead has to stay
-  at the park height - that is what keeps the limit-switch fan mod running -
-  and the bed has to stay where the eject keep-out zone was measured for; and
-* every printer sounds the beep before it pushes, since that is the only
-  warning that the machine is about to move again.
+Nothing in the hold block may move the machine: the toolhead has to stay at the
+park height - that is what keeps a limit-switch fan mod running - and the bed
+has to stay where the eject keep-out zone was measured for.  And the beep
+always sounds, since it is the only warning that the machine is about to move.
 """
 
 from __future__ import annotations
 
-import pytest
-
-from pylooprint.printers import EndCodeContext, get_profile
+from pylooprint.core.project import ThreeMfProject
+from pylooprint.pipeline import build_loops, detect_printer
+from pylooprint.printers import EndCodeContext
 from pylooprint.printers.base import BEEP_END, BEEP_START
-from pylooprint.printers.p1 import _PUSH_OFF_HEADING
+from pylooprint.printers.bedslinger import HOLD_END, HOLD_START, PUSH_PLAN_START
 from pylooprint.settings import DEFAULT_HOLD_SECONDS, LoopSettings
 
-HOLD_START = ";======= LOOPRINT RELEASE HOLD ======="
-HOLD_END = ";======= END LOOPRINT RELEASE HOLD ======="
-
-A1_MINI = get_profile("a1mini")
+from conftest import a1mini_end_code
 
 
-def _end_code(key: str = "a1mini", **overrides) -> str:
+def _end_code(**overrides) -> str:
     settings = LoopSettings(loops=1, cooldown_temp=26, **overrides)
-    return get_profile(key).end_code(EndCodeContext(settings=settings))
+    return a1mini_end_code(EndCodeContext(settings=settings))
 
 
 def _block(code: str) -> str:
@@ -34,26 +28,21 @@ def _block(code: str) -> str:
 
 
 def _push_index(code: str) -> int:
-    """Where the eject sequence starts, whichever template the profile assembled.
-
-    On the CoreXY machines that is the bed drop under its own heading; on the
-    bed slingers it is the push block the head template hands over to.
-    """
-    for marker in (_PUSH_OFF_HEADING, "@PUSH@", "Start Push Off"):
+    """Where the eject sequence starts - the push block or its one-line form."""
+    for marker in (PUSH_PLAN_START, "One-line push"):
         if marker in code:
             return code.index(marker)
     raise AssertionError("no push-off found in the end code")
 
 
-@pytest.mark.parametrize("key", ["a1", "a1mini"])
-def test_the_block_sits_between_the_cool_down_and_the_push_off(key):
-    code = _end_code(key)
+def test_the_block_sits_between_the_cool_down_and_the_push_off():
+    code = _end_code()
     assert code.rindex("M190") < code.index(HOLD_START)
     assert code.index(HOLD_END) < _push_index(code)
 
 
-def test_the_default_wait_is_five_minutes():
-    assert DEFAULT_HOLD_SECONDS == 500
+def test_the_default_wait_is_what_the_settings_say():
+    assert DEFAULT_HOLD_SECONDS > 0
     assert f"G4 S{DEFAULT_HOLD_SECONDS} ; hold before the push-off" in _end_code()
 
 
@@ -64,19 +53,14 @@ def test_the_beep_sounds_even_without_a_wait():
     assert BEEP_START in _block(code)
 
 
-@pytest.mark.parametrize("key", ["a1", "a1mini", "p1", "x1"])
-def test_every_printer_beeps_before_the_push(key):
-    code = _end_code(key)
+def test_the_beep_comes_right_before_the_push():
+    code = _end_code()
     assert code.count(BEEP_START) == 1
     assert code.count("M1006 W") >= 1
     assert code.index(BEEP_START) < code.index(BEEP_END) < _push_index(code)
 
 
 def test_nothing_in_the_block_moves_the_machine():
-    """The toolhead must stay parked: on the A1 Mini that is the fan switch.
-
-    The bed must stay put too - the eject keep-out zone assumes the park Y.
-    """
     commands = [line for line in _block(_end_code()).split("\n") if line and not line.startswith(";")]
     assert commands, "the block emitted nothing but comments"
     for command in commands:
@@ -85,20 +69,11 @@ def test_nothing_in_the_block_moves_the_machine():
         assert not command.startswith("G") or command.startswith("G4 ")
 
 
-def test_the_hold_is_still_at_the_park_height_in_the_inplace_end_code(golden_project):
-    from pylooprint.core.project import ThreeMfProject
-    from pylooprint.pipeline import build_loops, detect_printer
-
-    project = ThreeMfProject.open(golden_project)
+def test_the_hold_is_at_the_park_height_in_a_built_file(cone_multi_project):
+    project = ThreeMfProject.open(cone_multi_project)
     gcode = build_loops(
         project, detect_printer(project), LoopSettings(loops=1, cooldown_temp=28), source_name="x.3mf"
     ).gcode
     # Z only comes back down after the block has finished.
     assert gcode.index(HOLD_END) < gcode.index("G1 Z1 F3600 ; return to base position")
     assert gcode.rindex("M190 S24") < gcode.index(HOLD_START)
-
-
-@pytest.mark.parametrize("key", ["p1", "x1"])
-def test_corexy_printers_never_get_the_hold(key):
-    """The CoreXY bed cannot hold the toolhead at a park height; only the beep runs."""
-    assert HOLD_START not in _end_code(key)

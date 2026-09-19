@@ -1,17 +1,19 @@
-"""Bambu Lab A1 Mini."""
+"""Bambu Lab A1 Mini.
+
+The slicer's start code passes through untouched (the looping Orca profile in
+``profiles/a1mini/`` prints the purge wall); the eject sequence is spliced into
+the slicer's own end code in place of its park.
+"""
 
 from __future__ import annotations
 
-from typing import Mapping
-
-from ..core.parking import LIFT_AFTER, PARK_BEFORE, lift_moves
-from ..core.patching import replace_between
-from ..core.placement import extrusion_enters_zone, measure_extrusion_bounds
-from ..core.structure import GcodeStructure
-from ..core.template import apply_speed_mode
-from ..errors import UnsafeEjectZoneError
-from .base import BedBounds, EndCodeContext, MachineCode, load_template
-from .bedslinger import ALIGN_FEED_SLOW, BedSlingerProfile
+from ...core.parking import LIFT_AFTER, PARK_BEFORE, lift_moves
+from ...core.patching import replace_between
+from ...core.placement import extrusion_enters_zone, measure_extrusion_bounds
+from ...core.structure import GcodeStructure
+from ...errors import UnsafeEjectZoneError
+from ..base import BedBounds, EndCodeContext, MachineCode, load_template
+from ..bedslinger import BedSlingerProfile
 
 #: Unique lines in the slicer's own end code that bracket the part it replaces.
 #: Everything the slicer does before this (timelapse, filament unload, hotend
@@ -45,7 +47,7 @@ ZPUSH_BUMPER_POSITION_MM = 30
 
 #: The purge wall the looping profile prints on the front lip, where the stock
 #: purge lines go: two lines along X68..98 at Y-3.46 / Y-3.04, 1.8 mm tall (see
-#: ``profiles/source/a1mini_start.gcode``).  The sweep ends by driving the bed
+#: ``profiles/a1mini/source/start.gcode``).  The sweep ends by driving the bed
 #: forward at its middle so the nozzle shoves it off the lip broadside - to 1 mm
 #: past the stock draw's own Y-4, which the machine is known to reach.  Change
 #: the wall in the profile and these have to follow.
@@ -98,14 +100,6 @@ class A1MiniProfile(BedSlingerProfile):
     purge_wall_x = PURGE_WALL_X
     purge_sweep_y = PURGE_SWEEP_Y
 
-    # No start template: the slicer's own start code is kept as it is (the
-    # looping profile in profiles/ prints the purge wall), so there is nothing
-    # to render.  The end templates stay - the shared bed-slinger engine is
-    # exercised through them, and result.gcode.3mf pins the original tool's
-    # A1 Mini end code against them.
-    end_head_template_name = "end_a1_mini_head.gcode"
-    end_tail_template_name = "end_a1_mini_tail.gcode"
-
     def check_eject_clearance(self, print_body: str) -> None:
         """Refuse the build if the model sits where the toolhead comes down.
 
@@ -144,23 +138,11 @@ class A1MiniProfile(BedSlingerProfile):
                 "Move the model clear of that corner and re-slice."
             )
 
-    def build_machine_code(
-        self,
-        structure: GcodeStructure,
-        context: EndCodeContext,
-        values: Mapping[str, object],
-    ) -> MachineCode:
-        """Keep the slicer's machine G-code and patch only what looping breaks.
-
-        The start code is taken as the slicer wrote it.  What looping needs
-        from it - a purge that does not land where the next part goes - is the
-        looping profile's job (``profiles/source/a1mini_start.gcode`` prints a
-        purge wall on the front lip), so nothing here has to know Bambu's
-        template line by line.  Only the tail of the end code is rewritten.
-        """
+    def build_machine_code(self, structure: GcodeStructure, context: EndCodeContext) -> MachineCode:
+        """Keep the slicer's machine G-code; rewrite only the tail of the end code."""
         park = self.final_park(context)
         return MachineCode(
-            start_code=apply_speed_mode(structure.slicer_start_code),
+            start_code=structure.slicer_start_code,
             end_code=self.patch_slicer_end_code(structure.slicer_end_code, context),
             final_end_code=(
                 self.patch_slicer_end_code(structure.slicer_end_code, context, park=park)
@@ -181,12 +163,12 @@ class A1MiniProfile(BedSlingerProfile):
         does once its copy is off the plate.
         """
         head = (
-            load_template("end_a1_mini_inplace_head.gcode")
+            load_template("a1mini/templates/end_head.gcode")
             .replace("@PARK_Z@", str(PARK_Z))
             .replace("@M190@", self.cooldown_block(context.settings.cooldown_temp))
             .replace("@HOLD@", self.release_hold(context.settings))
         )
-        push = self.push_gcode(context, align_feed=ALIGN_FEED_SLOW)
+        push = self.push_gcode(context)
         sweep = self.wiggle_sweep()
 
         def build(replaced: str) -> str:

@@ -16,15 +16,17 @@ from __future__ import annotations
 
 import pytest
 
-from pylooprint.core.jsnum import to_fixed
+from pylooprint.core.numbers import to_fixed
 from pylooprint.core.parts import PartBounds, find_parts
 from pylooprint.core.project import ThreeMfProject
 from pylooprint.core.push_plan import PushLine, measure_contact, plan_push_lines
 from pylooprint.core.structure import split_gcode
 from pylooprint.printers import EndCodeContext, get_profile
-from pylooprint.printers.a1_mini import BLADE_OVERLAP, BLADE_WIDTH, PUSH_MIN_Z
+from pylooprint.printers.a1mini.profile import BLADE_OVERLAP, BLADE_WIDTH, PUSH_MIN_Z
 from pylooprint.printers.bedslinger import PUSH_PLAN_START
 from pylooprint.settings import LoopSettings
+
+from conftest import a1mini_end_code
 
 A1_MINI = get_profile("a1mini")
 REACH = BLADE_WIDTH * BLADE_OVERLAP
@@ -46,9 +48,11 @@ def _plan(*parts: PartBounds, **overrides):
     return plan_push_lines(parts, **settings)
 
 
-def _end_code(parts=()) -> str:
-    context = EndCodeContext(settings=LoopSettings(loops=1, cooldown_temp=23), parts=tuple(parts))
-    return A1_MINI.end_code(context)
+def _end_code(parts=(), **context_fields) -> str:
+    context = EndCodeContext(
+        settings=LoopSettings(loops=1, cooldown_temp=23), parts=tuple(parts), **context_fields
+    )
+    return a1mini_end_code(context)
 
 
 def test_parts_within_reach_of_one_line_share_it():
@@ -198,11 +202,6 @@ def test_a_plate_with_nothing_on_it_has_no_plan():
     assert A1_MINI.push_plan([]) == []
 
 
-def test_corexy_printers_plan_no_lines():
-    """P1/X1 still push through the plate centre in three fixed lanes."""
-    assert get_profile("p1").push_plan([_part(90, 20)]) == []
-
-
 def test_the_cone_plate_is_planned_by_the_machine_s_own_numbers(cone_multi_project):
     """A real plate, checked against the rules rather than against fixed figures.
 
@@ -242,7 +241,7 @@ def _walk(block: str) -> list[tuple[str, float, float, float]]:
     """Every move of a push block as ``(line, x, y, z)`` once it has run.
 
     The head arrives from the cool-down park: off the plate at X-13, bed forward,
-    and down at Z1 where the in-place head template leaves it.
+    and down at Z1 where the end-code head leaves it.
     """
     x, y, z = -13.0, 180.0, 1.0
     walked = []
@@ -304,8 +303,16 @@ def test_the_bed_comes_back_at_the_push_height_and_drops_only_then():
 
 def test_without_parts_the_push_falls_back_to_one_line():
     """A body with nothing measurable in it still has to be ejected."""
-    code = _end_code()
+    code = _end_code(model_height=40.0, centre_x=91.5)
 
     assert PUSH_PLAN_START not in code
-    assert "{first_layer_center_no_wipe_tower[0]}" in code
+    assert "G0 X91.50 F300" in code  # aimed at the model's centre
+    assert "G1 Z28.00 F600" in code  # 40 * 0.7
     assert code.count("G1 Y-0.5 F300") == 1
+
+
+def test_the_one_line_push_keeps_a_short_model_at_the_floor():
+    code = _end_code(model_height=4.0, centre_x=50.0)
+
+    assert "G1 Z0.20 F600" in code
+    assert "G1 Z2.80" not in code

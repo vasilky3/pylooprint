@@ -1,15 +1,13 @@
 """User-facing settings for a loop build.
 
 One frozen dataclass carries everything the pipeline needs, so that neither the
-core nor the printer profiles ever reach for global state (the original tool
-read every value straight off DOM elements).
+core nor the printer profiles reach for global state.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Limits copied from the original tool so that CLI validation behaves the same.
 MIN_LOOPS = 1
 MAX_LOOPS = 1000
 #: One copy by default - the eject sequence is useful on its own, and looping is

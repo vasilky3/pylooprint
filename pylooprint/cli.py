@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from . import __version__
-from .core.jsnum import to_fixed
+from .core.numbers import to_fixed
 from .core.parts import PartBounds
 from .core.project import ThreeMfProject
 from .errors import LooprintError
@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_HOLD_SECONDS,
         metavar="SECONDS",
         help=(
-            "A1/A1 Mini: seconds to hold at the park height after the cool-down, before "
+            "seconds to hold at the park height after the cool-down, before "
             f"the push-off beep (default: {DEFAULT_HOLD_SECONDS}; 0 skips the wait, the beep always sounds)"
         ),
     )
@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--simplepush",
         action="store_true",
         help=(
-            "A1/A1 Mini: push each part off with one straight shove, instead of the default "
+            "push each part off with one straight shove, instead of the default "
             "press-and-swipe cycles that work it loose first (tune the cycle in printers/bedslinger.py)"
         ),
     )
@@ -207,8 +207,9 @@ def _report(args: argparse.Namespace, result: BuildResult, destination: Path) ->
     print(f"printer     : {result.profile.name}")
     print(f"loops       : {args.loops}")
     print(f"model height: {result.max_layer_z:.2f} mm" + ("" if result.max_layer_z_from_header else " (fallback)"))
-    if result.placement:
-        print(f"placement   : {result.placement.direction} (X {result.placement.min_x:.1f}..{result.placement.max_x:.1f})")
+    if result.bounds:
+        box = result.bounds
+        print(f"model box   : X {box.min_x:.1f}..{box.max_x:.1f}  Y {box.min_y:.1f}..{box.max_y:.1f}")
     _report_parts(result.parts)
     _report_push_plan(result, not args.simplepush)
     print(f"cool-down   : {args.temp} C -> commanded {result.profile.apply_temp_offset(args.temp)} C")

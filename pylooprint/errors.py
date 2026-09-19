@@ -16,7 +16,7 @@ class GcodeNotFoundError(LooprintError):
 
 
 class AlreadyLoopedError(LooprintError):
-    """The input already carries a Looprint signature."""
+    """The input already carries pylooprint's signature."""
 
 
 class UnknownPrinterError(LooprintError):

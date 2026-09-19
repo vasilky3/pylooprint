@@ -1,20 +1,18 @@
-"""Shared engine for the bed-slinger machines (A1 and A1 Mini).
+"""Shared engine for the bed-slinger machines (A1 Mini, and the A1 once ported).
 
 Kinematics: the bed carries the part along Y while the toolhead stays put, so
 the part is pushed off by driving the bed forward under a lowered nozzle, then
-"wiggled" across X at bed level to sweep the part clear.
-
-Nothing here may be reused by the CoreXY profiles - mixing the two push
-directions would drive the gantry into the print.
+swept across X at bed level to clear the plate.  A machine whose gantry moves
+in Y must not reuse any of this.
 """
 
 from __future__ import annotations
 
 from typing import Sequence
 
-from ..core.jsnum import to_fixed
+from ..core.numbers import to_fixed
 from ..core.parts import PartBounds
-from ..core.push_plan import PushLine, measure_contact, plan_push_lines
+from ..core.push_plan import PushLine, measure_contact, plan_push_lines, push_height
 from ..settings import LoopSettings
 from .base import EndCodeContext, PrinterProfile, load_template
 
@@ -40,30 +38,30 @@ ZPUSH_SWIPE_MM = 2.0
 #: How many cycles run before the ordinary push carries the part away.
 ZPUSH_CYCLES = 8
 
-#: Feedrate of the "move the nozzle over the model centre" travel that precedes
-#: the push. The template end codes travel at rapid speed; the in-place strategy
-#: crawls instead, so the toolhead cannot knock a tall part over on the way.
-ALIGN_FEED_RAPID = 12000
-ALIGN_FEED_SLOW = 300
+#: Feedrate of the travel that brings the nozzle over a push line.  Slow, so
+#: the toolhead cannot knock a tall part over on the way.
+ALIGN_FEED = 300
 
 #: Markers bracketing the block, so it can be located in a finished file.
-HOLD_START = ";======= LOOPRINT RELEASE HOLD ======="
-HOLD_END = ";======= END LOOPRINT RELEASE HOLD ======="
+HOLD_START = ";======= PYLOOPRINT RELEASE HOLD ======="
+HOLD_END = ";======= END PYLOOPRINT RELEASE HOLD ======="
 
 #: The same, for the run of push lines.
-PUSH_PLAN_START = ";======= LOOPRINT PUSH PLAN ======="
-PUSH_PLAN_END = ";======= END LOOPRINT PUSH PLAN ======="
+PUSH_PLAN_START = ";======= PYLOOPRINT PUSH PLAN ======="
+PUSH_PLAN_END = ";======= END PYLOOPRINT PUSH PLAN ======="
 
 #: And for the park that closes the job, after the last copy is off the plate.
-PARK_START = ";======= LOOPRINT FINAL PARK ======="
-PARK_END = ";======= END LOOPRINT FINAL PARK ======="
+PARK_START = ";======= PYLOOPRINT FINAL PARK ======="
+PARK_END = ";======= END PYLOOPRINT FINAL PARK ======="
 
 
 class BedSlingerProfile(PrinterProfile):
     """Common behaviour of the Y-axis push-off printers."""
 
+    #: The bed sensor reads about this much high.
     temp_offset = -4
-
+    #: How many ``M190`` lines it takes to outlast the firmware's wait timeout.
+    m190_repeat: int
     #: Y the bed returns to after the push.
     y_forward: float
     #: X travel limits of the wiggle sweep.
@@ -86,12 +84,16 @@ class BedSlingerProfile(PrinterProfile):
     #: How far in front of the nozzle the bumper's front face sits.  The bumper is
     #: what touches the part, so contact comes that much earlier in the bed's
     #: travel than the nozzle's own position says; a machine whose offset has not
-    #: been measured keeps 0 and behaves as before.
+    #: been measured keeps 0.
     zpush_bumper_position: float = ZPUSH_BUMPER_POSITION_MM
 
     def apply_temp_offset(self, temp: int) -> int:
-        """The bed sensor reads ~4 degrees high, and 15 C is the floor."""
+        """Bed temperature to command for a requested cool-down; 15 C is the floor."""
         return max(15, temp + self.temp_offset)
+
+    def cooldown_block(self, temp: int) -> str:
+        """The repeated ``M190`` wait that holds the print until it releases."""
+        return "\n".join([f"M190 S{self.apply_temp_offset(temp)}"] * self.m190_repeat)
 
     def push_plan(self, parts: Sequence[PartBounds], print_body: str = "") -> list[PushLine]:
         """One line per part, or per group of parts sharing an X band.
@@ -118,9 +120,7 @@ class BedSlingerProfile(PrinterProfile):
             )
         return lines
 
-    def push_gcode(
-        self, context: EndCodeContext | None = None, align_feed: int = ALIGN_FEED_RAPID
-    ) -> str:
+    def push_gcode(self, context: EndCodeContext) -> str:
         """Run the blade down every push line, left to right.
 
         The order of the moves matters as much as the positions: **the blade only
@@ -131,18 +131,18 @@ class BedSlingerProfile(PrinterProfile):
         line's own X, push, bed back along the band just swept, and only there
         down again.
 
-        Falls back to the single line through the plate centre when the parts
+        Falls back to the single line through the model's centre when the parts
         are unknown - a body with nothing measurable in it still has to be
-        ejected, and the slicer's own centre is the best guess left.
+        ejected.
         """
-        lines = self._lines(context)
+        lines = context.push_lines or self.push_plan(context.parts)
         if not lines:
-            return self._single_push_gcode(align_feed)
+            return self._single_push_gcode(context)
 
-        zpush = context is not None and context.settings.zpush
+        zpush = context.settings.zpush
         blocks = [self._push_plan_header(lines, zpush=zpush)]
         blocks += [
-            self._push_line_gcode(line, index, len(lines), align_feed, zpush=zpush)
+            self._push_line_gcode(line, index, len(lines), zpush=zpush)
             for index, line in enumerate(lines, start=1)
         ]
         blocks.append(
@@ -151,17 +151,6 @@ class BedSlingerProfile(PrinterProfile):
             f"{PUSH_PLAN_END}\n"
         )
         return "\n".join(blocks)
-
-    def _lines(self, context: EndCodeContext | None) -> Sequence[PushLine]:
-        """The push the pipeline planned, or one worked out from the parts.
-
-        The pipeline plans the push once so the report and the G-code name the
-        same moves; a profile asked for an end code on its own still plans its
-        own, which is what the tests and the template path do.
-        """
-        if context is None:
-            return []
-        return context.push_lines or self.push_plan(context.parts)
 
     def _push_plan_header(self, lines: Sequence[PushLine], *, zpush: bool) -> str:
         """What the plan is, spelled out where the operator will read it."""
@@ -186,11 +175,9 @@ class BedSlingerProfile(PrinterProfile):
         ]
         return "\n".join(header) + "\n"
 
-    def _push_line_gcode(
-        self, line: PushLine, index: int, total: int, align_feed: int, *, zpush: bool
-    ) -> str:
+    def _push_line_gcode(self, line: PushLine, index: int, total: int, *, zpush: bool) -> str:
         return (
-            load_template("a1_push_line.gcode")
+            load_template("templates/bedslinger/push_line.gcode")
             .replace("@INDEX@", str(index))
             .replace("@TOTAL@", str(total))
             .replace("@PART_LIST@", _part_list(line))
@@ -198,7 +185,7 @@ class BedSlingerProfile(PrinterProfile):
             .replace("@TRAVEL_Z@", to_fixed(self.push_min_z, 2))
             .replace("@X@", to_fixed(line.x, 2))
             .replace("@Z@", to_fixed(line.z, 2))
-            .replace("@ALIGN_FEED@", str(align_feed))
+            .replace("@ALIGN_FEED@", str(ALIGN_FEED))
             .replace("@PUSH_FACTOR@", _format_number(self.push_height_factor))
             .replace("@Y_FORWARD@", _format_number(self.y_forward))
         )
@@ -258,12 +245,20 @@ class BedSlingerProfile(PrinterProfile):
         )
         return "\n".join(moves)
 
-    def _single_push_gcode(self, align_feed: int) -> str:
-        """The one-line push: plate centre, one height, one pass."""
-        template = load_template("a1_push.gcode")
+    def _single_push_gcode(self, context: EndCodeContext) -> str:
+        """The one-line push: model centre, one height, one pass."""
+        z = push_height(
+            context.model_height,
+            self.push_height_factor,
+            self.push_min_model_height,
+            self.push_min_z,
+        )
         return (
-            template.replace("@Y_FORWARD@", _format_number(self.y_forward))
-            .replace("@ALIGN_FEED@", str(align_feed))
+            load_template("templates/bedslinger/push.gcode")
+            .replace("@X@", to_fixed(context.centre_x, 2))
+            .replace("@Z@", to_fixed(z, 2))
+            .replace("@Y_FORWARD@", _format_number(self.y_forward))
+            .replace("@ALIGN_FEED@", str(ALIGN_FEED))
             .replace("@PUSH_FACTOR@", _format_number(self.push_height_factor))
             .replace("@PUSH_MIN_HEIGHT@", _format_number(self.push_min_model_height))
             .replace("@PUSH_MIN_Z@", _format_number(self.push_min_z))
@@ -342,35 +337,6 @@ class BedSlingerProfile(PrinterProfile):
             lines += ["G90", park.lift]
         lines += [park.moves, PARK_END]
         return "\n".join(lines) + "\n"
-
-    def final_end_code(self, context: EndCodeContext) -> str | None:
-        """The last loop parks the head; the ones before it just carry on."""
-        park = self.final_park(context)
-        return self.end_code(context, park=park) if park else None
-
-    def end_code(self, context: EndCodeContext, park: str = "") -> str:
-        temp = context.settings.cooldown_temp
-        body = (
-            load_template(self.end_head_template_name)
-            .replace("@M190@", self.cooldown_block(temp))
-            .replace("@HOLD@", self.release_hold(context.settings))
-            .replace("@PUSH@", self.push_gcode(context))
-        )
-        body += "\n" + self.wiggle_sweep()
-        # Before the tail: that is where the slicer's resets, its finish sound
-        # and the M18 that drops the motors live, and the park has to happen
-        # while the motors are still holding.
-        body += park
-        body += load_template(self.end_tail_template_name)
-        return f"{self.preset_header(temp)}\n{body}"
-
-    def preset_header(self, temp: int) -> str:
-        actual = self.apply_temp_offset(temp)
-        return f";===== {self.name} PRESET (Temp: {temp}°C actual: {actual}°C, Y-axis push-off) ====="
-
-    # End-code template file names, supplied by the concrete profiles.
-    end_head_template_name: str
-    end_tail_template_name: str
 
 
 def _zpush_summary() -> str:

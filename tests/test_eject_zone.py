@@ -117,21 +117,20 @@ def test_the_error_names_the_zone_and_where_the_model_intrudes():
     assert "re-slice" in message
 
 
-@pytest.mark.parametrize("key", ["p1", "x1", "a1"])
-def test_other_printers_do_not_apply_the_check(key):
-    """Only the A1 Mini brings the toolhead down onto the plate."""
-    get_profile(key).check_eject_clearance(FULLFIELD)
-    get_profile(key).check_eject_clearance("")
+def test_a_profile_without_a_keep_out_accepts_anything():
+    """The check is the A1 Mini's; the base profile refuses nothing."""
+    get_profile("a1").check_eject_clearance(FULLFIELD)
+    get_profile("a1").check_eject_clearance("")
 
 
 # ---------------------------------------------------------------------------
 # measuring the model
 # ---------------------------------------------------------------------------
-def test_bounds_are_measured_from_the_print_body(golden_project):
-    structure = split_gcode(ThreeMfProject.open(golden_project).gcode)
+def test_bounds_are_measured_from_the_print_body(suitable_project):
+    structure = split_gcode(ThreeMfProject.open(suitable_project).gcode)
     bounds = measure_extrusion_bounds(structure.print_body)
-    assert (round(bounds.min_x, 2), round(bounds.max_x, 2)) == (86.21, 163.73)
-    assert (round(bounds.min_y, 2), round(bounds.max_y, 2)) == (85.35, 164.63)
+    assert (round(bounds.min_x, 1), round(bounds.max_x, 1)) == (20.1, 179.7)
+    assert (round(bounds.min_y, 1), round(bounds.max_y, 1)) == (0.2, 159.8)
 
 
 def test_bounds_are_none_when_nothing_extrudes():
@@ -208,9 +207,9 @@ def test_the_gnome_plate_survives_the_split_the_pipeline_hands_over(tmp_path):
     A1_MINI.check_eject_clearance(structure.print_body)
 
 
-def test_pipeline_accepts_a_model_clear_of_the_corner(golden_project):
-    """The real sample reaches Y164.6 - past Y150 - but starts at X86."""
-    project = ThreeMfProject.open(golden_project)
+def test_pipeline_accepts_a_model_clear_of_the_corner(suitable_project):
+    """The cube reaches Y159.8 - past Y150 - but starts at X20."""
+    project = ThreeMfProject.open(suitable_project)
     result = build_loops(project, A1_MINI, LoopSettings(loops=1, cooldown_temp=28), source_name="x.3mf")
     assert result.gcode
 
@@ -232,17 +231,17 @@ def test_suitable_cube_is_accepted(suitable_project):
 
 
 def test_trpaslik_plate_is_accepted(trpaslik_project):
-    """The real plate the bounding-box check used to refuse.
+    """A plate whose bounding box covers the keep-out corner while no material does.
 
-    Its box genuinely covers the keep-out corner - that is asserted here, so the
-    test still means something if anyone reaches for a bounding box again - but
-    the material above Y150 sits at X53-105, nowhere near it.
+    The box is asserted to span the corner, so the test keeps meaning something
+    if anyone reaches for a bounding box; the material above Y150 sits at
+    X53-105, nowhere near it.
     """
     project = ThreeMfProject.open(trpaslik_project)
     body = split_gcode(project.gcode).print_body
 
     bounds = measure_extrusion_bounds(body)
-    assert bounds.overlaps(0.0, 15.0, 150.0, 180.0), "the box no longer spans the corner"
+    assert bounds.overlaps(0.0, 15.0, 150.0, 180.0), "the box must span the corner for this test to mean anything"
 
     result = build_loops(
         project, A1_MINI, LoopSettings(loops=1, cooldown_temp=28), source_name=trpaslik_project.name

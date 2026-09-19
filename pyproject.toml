@@ -21,7 +21,7 @@ test = ["pytest>=7"]
 include = ["pylooprint*"]
 
 [tool.setuptools.package-data]
-"pylooprint.printers.templates" = ["*.gcode"]
+"pylooprint.printers" = ["templates/*/*.gcode", "*/templates/*.gcode"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

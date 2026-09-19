@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from pylooprint.core.jsnum import to_fixed
+from pylooprint.core.numbers import to_fixed
 from pylooprint.core.parts import PartBounds, find_parts
 from pylooprint.core.project import ThreeMfProject
 from pylooprint.core.push_plan import PushLine
@@ -33,6 +33,8 @@ from pylooprint.printers.bedslinger import (
     ZPUSH_SWIPE_MM,
 )
 from pylooprint.settings import LoopSettings
+
+from conftest import a1mini_end_code
 
 A1_MINI = get_profile("a1mini")
 
@@ -59,9 +61,7 @@ def _push_block(*parts: PartBounds, zpush: bool = True, lines=None) -> list[str]
     """The moves of the push plan, comments and blank lines dropped."""
     settings = LoopSettings(loops=1, cooldown_temp=23, zpush=zpush)
     planned = _plan(*parts) if lines is None else lines
-    code = A1_MINI.end_code(
-        EndCodeContext(settings=settings, parts=parts, push_lines=tuple(planned))
-    )
+    code = a1mini_end_code(EndCodeContext(settings=settings, parts=parts, push_lines=tuple(planned)))
     block = code[code.index(PUSH_PLAN_START) : code.index("G1 Y135")]
     return [line for line in block.split("\n") if line.startswith(("G0 ", "G1 "))]
 
@@ -206,7 +206,7 @@ def test_the_simple_push_is_one_straight_shove():
 
     assert [line.split(";")[0].strip() for line in moves] == [
         "G1 Z0.20 F600",
-        "G0 X50.00 F12000",
+        "G0 X50.00 F300",
         "G1 Z21.00 F600",
         "G1 Y-0.5 F300",
         "G1 Y180 F800",
@@ -261,6 +261,6 @@ def test_only_the_zpush_build_measures_the_contact(cone_multi_project):
 
 def test_the_plan_header_says_what_the_cycles_will_do():
     settings = LoopSettings(loops=1, cooldown_temp=23, zpush=True)
-    code = A1_MINI.end_code(EndCodeContext(settings=settings, parts=(_part(50, 30),)))
+    code = a1mini_end_code(EndCodeContext(settings=settings, parts=(_part(50, 30),)))
 
     assert f"; {ZPUSH_CYCLES} press-and-swipe cycles" in code
