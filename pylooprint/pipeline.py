@@ -1,24 +1,18 @@
-"""The build pipeline: sliced project in, looped project out.
-
-The order of the steps here is the contract between the common code and the
-printer profiles, and it is the same order the original web tool used.
-"""
+"""The build pipeline: sliced project in, looped project out."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .core.constants import FALLBACK_MAX_Z_HEIGHT_MM, LOOPRINT_WATERMARKS, MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_RE
+from .core.constants import FALLBACK_MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_MM, MAX_Z_HEIGHT_RE, SIGNATURE
 from .core.loop_builder import LoopPlan, build_looped_gcode
 from .core.parking import read_slicer_park
 from .core.parts import PartBounds, find_parts
-from .core.placement import ModelPlacement, determine_model_placement
-from .core.push_plan import PushLine
+from .core.placement import ExtrusionBounds, measure_extrusion_bounds
 from .core.project import PROJECT_SETTINGS, SLICE_INFO, ThreeMfProject
+from .core.push_plan import PushLine
 from .core.structure import split_gcode
-from .core.template import centre_coordinates, resolve_max_layer_z, substitute_first_layer_centre
-from .core.variables import extract_variable_values
 from .errors import AlreadyLoopedError, UnknownPrinterError
 from .printers import EndCodeContext, PrinterProfile
 from .printers.detection import detect_from_gcode_header, detect_from_model_id, detect_from_project_settings
@@ -31,9 +25,10 @@ class BuildResult:
 
     gcode: str
     profile: PrinterProfile
-    placement: ModelPlacement
     max_layer_z: float
     max_layer_z_from_header: bool
+    #: Box around everything printed; ``None`` when nothing extrudes.
+    bounds: ExtrusionBounds | None = None
     #: One box per separate part on the plate, front-left first.
     parts: list[PartBounds] = field(default_factory=list)
     #: The push lines planned from those parts, left to right.  Empty for a
@@ -68,11 +63,8 @@ def build_loops(
     gcode = project.gcode
     warnings: list[str] = []
 
-    watermark = next((mark for mark in LOOPRINT_WATERMARKS if mark in gcode), None)
-    if watermark:
-        raise AlreadyLoopedError(
-            f"{project.path.name} has already been looped (found {watermark!r})"
-        )
+    if SIGNATURE in gcode:
+        raise AlreadyLoopedError(f"{project.path.name} has already been looped")
 
     max_layer_z, from_header = _read_max_layer_z(gcode, warnings)
     structure = split_gcode(gcode)
@@ -81,13 +73,12 @@ def build_loops(
     # brings the toolhead down to eject the part.
     profile.check_eject_clearance(structure.print_body)
 
-    # What is actually on the plate, part by part, and the push lines the
-    # profile plans from it.  The end code asks the profile for the same plan,
-    # so what is reported is what the printer will run.
+    # What is on the plate, part by part, and the push lines planned from it.
+    # The end code is built from the same plan, so what is reported is what
+    # the printer will run.  The press-and-swipe push measures where the blade
+    # meets plastic, which only the G-code can say; the plain push works off
+    # the boxes alone and is not charged for that scan.
     parts = find_parts(structure.print_body)
-    # The press-and-swipe push needs to know where the blade really meets plastic,
-    # which only the G-code can say; the plain push works off the boxes alone, so
-    # it is not made to pay for that scan.
     push_lines = profile.push_plan(parts, structure.print_body if settings.zpush else "")
 
     blind = [
@@ -103,45 +94,26 @@ def build_loops(
             + ": nothing there to work loose, so those lines push straight instead"
         )
 
-    bed = profile.bed_bounds
-    placement = determine_model_placement(gcode, bed.min_x, bed.max_x, bed.min_y, bed.max_y)
-    values = extract_variable_values(gcode, structure.config, placement.as_bounds())
-    values["originalToolCommand"] = structure.original_tool_command
-
+    bounds = measure_extrusion_bounds(structure.print_body)
     context = EndCodeContext(
         settings=settings,
-        model_min_x=placement.min_x,
-        model_max_x=placement.max_x,
         parts=tuple(parts),
         push_lines=tuple(push_lines),
         # Where this plate would leave the head if it were printed once, the
         # ordinary way.  The last loop finishes there.
         slicer_park=read_slicer_park(structure.slicer_end_code),
-        direction=placement.direction,
+        model_height=max_layer_z,
+        centre_x=(bounds.min_x + bounds.max_x) / 2 if bounds else 0.0,
     )
 
-    # How the machine G-code is produced - patched in place, or replaced with
-    # the profile's templates - is the profile's own decision.
-    machine_code = profile.build_machine_code(structure, context, values)
+    machine_code = profile.build_machine_code(structure, context)
     warnings.extend(machine_code.warnings)
-
-    centre_x, centre_y = centre_coordinates(values.get("first_layer_center_no_wipe_tower"))
-
-    def finish(code: str) -> str:
-        """The two passes every end code goes through before it is emitted."""
-        code = substitute_first_layer_centre(code, centre_x, centre_y)
-        return resolve_max_layer_z(code, max_layer_z, from_header=from_header)
-
-    end_code = finish(machine_code.end_code)
-    final_end_code = (
-        finish(machine_code.final_end_code) if machine_code.final_end_code else None
-    )
 
     plan = LoopPlan(
         structure=structure,
         start_code=machine_code.start_code,
-        end_code=end_code,
-        final_end_code=final_end_code,
+        end_code=machine_code.end_code,
+        final_end_code=machine_code.final_end_code,
         loops=settings.loops,
         source_name=source_name,
         generated_at=generated_at,
@@ -150,9 +122,9 @@ def build_loops(
     return BuildResult(
         gcode=build_looped_gcode(plan),
         profile=profile,
-        placement=placement,
         max_layer_z=max_layer_z,
         max_layer_z_from_header=from_header,
+        bounds=bounds,
         parts=parts,
         push_lines=push_lines,
         warnings=warnings,

@@ -1,11 +1,9 @@
 """The separate parts sitting on the plate, and the box each one occupies.
 
-The rest of the code only ever asks about the plate as a whole: where the model
-sits (:func:`~pylooprint.core.placement.determine_model_placement`) and what
-single box everything fits in
-(:func:`~pylooprint.core.placement.measure_extrusion_bounds`).  Neither answers
-"how many parts are on this plate, and where is each one" - which is what an
-operator wants to see before starting an unattended looping run.
+:func:`~pylooprint.core.placement.measure_extrusion_bounds` gives one box for
+the whole plate; this answers "how many parts are there, and where is each one"
+- which is what the push has to know, and what an operator wants to see before
+an unattended run.
 
 Parts are found from the *geometry*, not from the slicer's object markers: what
 matters is which lumps of plastic are physically separate, and one slicer object

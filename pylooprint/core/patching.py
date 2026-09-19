@@ -1,11 +1,9 @@
 """Editing the slicer's own G-code in place.
 
-The default strategy replaces the machine start and end code wholesale with
-Factorian's templates.  The in-place strategy instead keeps what the slicer
-emitted and rewrites just the one part that is wrong for a looping print: the
-tail of the end code, where the part has to be cooled and ejected.  (The start
-code is left alone - the purge that looping needs is the looping profile's job,
-see ``profiles/source/a1mini_start.gcode``.)
+The slicer's machine code is kept as emitted and only the part that is wrong for
+a looping print is rewritten: the tail of the end code, where the part has to be
+cooled and ejected.  (The start code is left alone - the purge that looping
+needs is the looping profile's job, see ``profiles/a1mini/source/start.gcode``.)
 
 The edit is anchored on text the slicer emits verbatim, and raises
 :class:`PatchError` when an anchor is missing rather than silently producing

@@ -1,252 +1,73 @@
 # pylooprint
 
-Console-only Python port of [Looprint](../looprint) — it takes a plate you already
-sliced in Bambu Studio / OrcaSlicer and rewrites it so the same part prints many
-times in a row, cooling down and ejecting each copy before the next one starts.
-
-No web view, no browser, no upload, nothing to install. One command, run from
-this folder:
+Console tool for the Bambu Lab A1 Mini: it takes a plate you already sliced in
+OrcaSlicer / Bambu Studio and rewrites it so the same part prints many times in
+a row, cooling down and ejecting each copy before the next one starts.
 
 ```bash
-python -m pylooprint "my_part.gcode.3mf"
+python -m pylooprint "my_part.gcode.3mf"        # one copy that ejects itself
+python -m pylooprint "my_part.gcode.3mf" -n 10  # ten in a row
 ```
 
-That produces one copy that ejects itself when it finishes. Add `-n 10` to print
-ten in a row.
-
-The original project is untouched; this package only *reads* its G-code
-templates (they were extracted once into `printers/templates/`).
+Nothing to install; run it from this folder (or `python -m pip install -e .` for
+a bare `pylooprint` command).
 
 > **Safety.** This drives a heated printer through an unattended part-ejection
 > cycle. Stay in the room. Watch the first loop end-to-end before trusting it.
 
----
+## How a loop works
 
-## How it loops a plate
+The slicer's own machine G-code is kept; only what breaks looping is changed.
 
-Keep the machine G-code the slicer emitted and rewrite only what is wrong for
-looping:
-
-* **The purge is the profile's job, not pylooprint's.** The stock start G-code
-  draws two calibration lines on the strip in front of the plate. pylooprint used
-  to cut those out and purge into the air instead; now the start code is taken
-  exactly as the slicer wrote it, and the looping machine profile that ships in
-  `profiles/` does the right thing itself: the calibration draw inside `M622 J1`
-  becomes a short air purge (the A1 Mini's flow calibration measures pressure,
-  it does not scan a line), and the second draw becomes a small **purge wall** —
-  waits for the first-layer nozzle temperature, purges 12 mm in the air with the
-  fan on, then prints two lines along X68..98 on the front lip, 1.8 mm tall in
-  nine 0.2 mm layers — the first without fan, the rest with it, like the 0.2 mm
-  profile prints a part — and ends by dragging the nozzle across the wall's top
-  onto the plate edge as a wipe, fan off again for the model's first layer.
-  Written as plain G-code for the 0.2 mm profile, so it comes out the same
-  whatever print profile is selected. The only thing pylooprint knows about
-  the wall is where to shove it off at the end of the sweep.
-* **The end code gets an eject sequence spliced in.** Everything the slicer does
-  first (timelapse, filament unload, hotend off) is kept, the Z-lift is carried
-  over, the gantry parks up against the mechanical switch at the top (Z184 —
-  deliberately above the 180 mm printable height, do not "correct" it), then the
-  cool-down, the release hold, the push-off and the wiggle sweep run, and the
-  slicer's own reset and finish sound close the loop. The move onto a push line
-  crawls at F300 rather than a rapid, so the toolhead cannot knock a tall part
-  over.
-* **The push follows the parts** (A1 / A1 Mini). The toolhead is a blade of a
-  known width, and a set fraction of it has to sit over a part to carry it off,
-  so one pass sweeps everything whose centre is within `blade_width × overlap` of
-  it — 12.5 mm as the A1 Mini is tuned today. Parts are grouped into
-  as few such passes as possible and pushed left to right, each pass coming down
-  to 70% of the height of the *shortest* part it covers — the blade then touches
-  every part of the group instead of passing over the low ones, which is what a
-  single pass at the plate's centre and the tallest part's height used to do.
-  A plate whose body cannot be measured falls back to that single central pass.
-* **The blade only ever descends where it has already been.** Coming down at a
-  fresh spot means coming down blind onto whatever is under it, so instead it
-  drops to the travel height (Z0.2) while still in the corner, crosses the plate
-  at that height — where a part in the way is shoved aside rather than struck from
-  above — and only goes *up* once it is standing on its line. After the push the
-  bed comes back along the band just swept, at the same height, and the blade
-  drops again only there. Every move retraces a path already proven clear.
-* **The push works each part loose first** (`-s`/`--simplepush` brings back the
-  one straight shove). Parts release better with a Z component than with a
-  straight shove, so the default push stops just short of the
-  first plastic the blade will meet — *measured in the G-code*, as the back edge
-  of whatever stands inside the bumper's width (the same `blade_width × overlap`
-  reach the grouping uses) at or above the height the blade pushes at, which is
-  not the back edge of the part's box: a cone at 70% of its height stands tens of
-  millimetres further in, and a neighbouring wall inside the band is met first
-  whether this line is aimed at it or not. The bumper's own offset in front of
-  the nozzle (`ZPUSH_BUMPER_POSITION_MM`, 30 mm on the A1 Mini) is added on top,
-  since that face is what touches the part and the bed therefore has to stop that
-  much earlier in its travel. Then it presses in, swipes forward *and* up
-  together — scooping under the part — comes back in Y and down in Z, and
-  repeats, biting one press deeper each cycle; after the set number of cycles the
-  ordinary push carries the loosened part off. A line with nothing under its
-  bumper at that height has no contact to work from, so it pushes straight and
-  says so, in the report and in a warning — better than cycling through thin air
-  for the depth of the plate. The cycle's numbers are constants
-  at the top of `printers/bedslinger.py` (`ZPUSH_APPROACH_MM`, `ZPUSH_PRESS_MM`,
-  `ZPUSH_SWIPE_MM`, `ZPUSH_CYCLES`), and the bumper offset sits with the other
-  per-machine figures in the profile.
-* **A release hold sits between the cool-down and the push-off** (A1 / A1 Mini).
-  Once the bed reaches its target the printer waits `--hold` seconds, so the part
-  keeps shrinking off the plate before anything touches it. Nothing in that block
-  moves the machine: the toolhead has to stay parked at Z184, which is what keeps
-  a limit-switch fan mod running for the whole hold, and the bed has to stay
-  where the eject keep-out zone below was measured for.
-* **The last copy ends parked where an ordinary print parks** (A1 / A1 Mini).
-  The slicer's own lift and park moves are read out of the file the plate came
-  in — `G1 X-13 Y180` on the A1 Mini, with a Z that follows the part (its height
-  plus 100 mm, capped at the machine's ceiling) — and replayed once the last part
-  is off the plate, lift first, since the sweep leaves the nozzle 0.2 mm above
-  it. The copies before the last one do not bother: the next one starts by
-  homing anyway.
-* **Every printer beeps right before it pushes** — one short `M1006` tone, the
-  same macro the slicer's finish sound uses. The machine has been standing still
-  through the cool-down, so the beep is the only warning that it is about to move
-  again and throw the part off the plate.
-
-Everything the printer profile configured — flow calibration, bed levelling,
-build-plate detection — survives untouched.
-
-### Fallback for printers not yet ported
-
-Only the **A1 Mini** has this in-place implementation so far. Any other printer
-falls back — with a warning — to the **Factorian templates**: the machine start
-and end code are thrown away and replaced with Factorian Designs' start/end
-G-code, which is what the original web tool does. This is a stopgap; each printer
-loses the fallback as its in-place patches are added.
-
-Either way the loops are assembled by the same code, so the banner and the
-per-loop markers are identical — only the machine G-code differs.
-
----
-
-## Why the structure looks like this
-
-The single-file original mixes UI, printer data and G-code surgery in one
-12 000-line script. The port splits it along the line that actually matters:
-**what every Bambu printer needs** versus **what one machine needs**.
-
-### Common G-code modifications — `pylooprint/core/`
-
-These run identically for a P1, X1, A1 and A1 Mini:
-
-| Step | Module | What it does |
-|---|---|---|
-| 1. Open the container | `project.py` | A `.gcode.3mf` is a zip; find `Metadata/plate_N.gcode`, keep every other member byte-identical |
-| 2. Refuse a re-loop | `constants.py` | Bail out if the file already carries a Looprint watermark |
-| 3. Read the model height | `pipeline.py` | `; max_z_height:` from the header — every Z-drop decision depends on it |
-| 4. Locate the model | `placement.py` | Scan extrusion moves for the X/Y bounding box, filtering prime lines, nozzle wipes and start-code travel |
-| 5. Split the file | `structure.py` | header / `CONFIG_BLOCK` / setup / print body, plus the slicer's machine start and end code kept aside for patching |
-| 5a. Find the parts | `parts.py` | Cluster the extruded moves into separate parts and measure a box for each |
-| 5b. Plan the push | `push_plan.py` | Group the parts into blade-wide bands and give each band an X and a Z, left to right |
-| 6. Keep the extruder | `structure.py` | Recover `T0`..`T3`, otherwise the loop inherits `T255` from the unload sequence and never extrudes |
-| 7. Read the slicer settings | `config_block.py`, `variables.py` | Parse `CONFIG_BLOCK` into values, with G-code and hard-coded fallbacks |
-| 8. Render the templates | `template.py` | `[name]`, `{expression}` and `{if ...}{endif}` substitution, including the `{max_layer_z ± n}` and `{max_layer_z * n}` arithmetic |
-| 9. Assemble the loops | `loop_builder.py` | Banner, per-loop header/config or `M400`, setup, start code, `M220 S100`, print, end code |
-| 10. Repack | `project.py` | Write the new plate G-code back into a copy of the zip |
-
-Step 8 is where the two strategies part company, and **the profile decides which
-one it uses** — the pipeline just calls `profile.build_machine_code(...)` and
-takes what it is handed. `PrinterProfile.build_machine_code` renders Factorian's
-templates by default; `A1MiniProfile` overrides that single method to keep the
-slicer's own machine G-code instead, splicing the eject sequence into its end
-code via `patching.py` — an anchored replacement that raises rather than
-silently mis-patching when an anchor is missing. The start code passes through
-untouched.
-
-Porting a printer to the in-place strategy therefore means overriding one
-method. There is no capability flag to keep in step with it.
-
-### Printer-specific modifications — `pylooprint/printers/`
-
-Two engines, because the two families push the part off in *different
-directions* and confusing them drives the toolhead into the print:
-
-```
-printers/
-  base.py          PrinterProfile: the contract (bed, temp offset, start code, end code)
-  bedslinger.py    A1 family engine  - bed moves in Y, part is pushed by driving the bed forward
-  corexy.py        P1/X1 family engine - bed is fixed, gantry pushes along Y in three X lanes
-  a1.py            A1        (N2S)     bed -48..256 x 0..262, 45x M190, 6-position wiggle sweep
-  a1_mini.py       A1 Mini   (N1)      bed -13..180 x 0..185, 50x M190, 4-position wiggle sweep
-  p1.py            P1/P1S    (C11)     bed 10..246 x 0..256, 30x M190, splices lanes into Factorian's template
-  x1.py            X1/X1C    (BL-P001) same lanes as P1 + filament cutter and aux-fan sequencing
-  detection.py     printer_model_id -> profile, with project-settings and header fallbacks
-  templates/       the raw start/end G-code blocks, one file each
-```
-
-What genuinely differs per machine:
-
-| | A1 | A1 Mini | P1/P1S | X1/X1C |
-|---|---|---|---|---|
-| Push axis | Y (bed) | Y (bed) | Y (gantry), 3 X lanes | Y (gantry), 3 X lanes |
-| Bed X range | −48..256 | −13..180 | 10..246 | 10..246 |
-| Bed sensor offset | −4 °C | −4 °C | none | none |
-| `M190` repeats | 45 | 50 | 30 | 30 |
-| Z-drop | 70% of height, Z0.2 under 6 mm | 70% of height, Z0.2 under 6 mm | top − 30 mm, Z1 under 31 mm | top − 30 mm, Z1 under 31 mm |
-| Blade / overlap | 55 mm × 0.5 | 50 mm × 0.25 | declared, unused | declared, unused |
-| Bumper ahead of nozzle | not measured (0) | 30 mm | — | — |
-| Push lines | one per part or X band | one per part or X band | 3 fixed lanes | 3 fixed lanes |
-| Sweep | wiggle, 6 positions, at Z0.2 | wiggle, 4 positions, at Z0.2 | — | — |
-| Release hold | yes | yes | — | — |
-| Push-off beep | yes | yes | yes | yes |
-| Eject keep-out | — | X 0–15, Y 150–180 | — | — |
-| Purge wall shove | — | X83, to Y-5 | — | — |
-| Extras | — | in-place end-code splice | splices lanes into Factorian's template | cutter sequence, aux fan |
-
-Adding a printer means one module plus one entry in `printers/__init__.py`;
-nothing in `core/` changes.
-
-### The A1 Mini eject keep-out
-
-The A1 Mini push-off parks the nozzle off the plate at X-13 / Y180 and then
-drops the toolhead to the push height — as low as Z0.2 for a part under 6 mm.
-The nozzle clears the plate, but the toolhead *body*
-overhangs the back-left corner by 15 mm in X and 30 mm in Y, so anything printed
-in `X 0–15, Y 150–180` is struck on the way down. A build whose model prints
-there is refused before any G-code is generated:
-
-```
-error: Model cannot be ejected. The safe head-descent zone is occupied. ...
-the model prints inside it, at X 8.40, Y 162.10 mm.
-```
-
-The check walks the actual extruding moves — whole segments, so a diagonal line
-crossing the corner counts even when neither of its ends is inside it. It
-deliberately does *not* use the model's bounding box: a plate that reaches the
-left edge at the front and the back edge in the middle has a box covering a
-corner it never touches, and judging by the box refuses a perfectly good file.
-Brim and skirt are material too, so they are measured like anything else.
-
----
+* **The start code passes through untouched.** Purging is the job of the
+  looping machine profile in `profiles/a1mini/`: instead of the stock purge
+  lines it waits for the first-layer nozzle temperature, purges into the air,
+  and prints a small **purge wall** on the front lip - two lines along X68..98,
+  1.8 mm tall, written as plain G-code for the 0.2 mm profile so it comes out
+  the same whatever print profile is selected. A plate sliced with the stock
+  profile still loops; it just draws the stock purge lines there instead.
+* **The end code gets the eject sequence spliced in.** Everything the slicer
+  does first (timelapse, filament unload, hotend off) is kept, then:
+  1. the gantry parks up against the top switch (Z184 - deliberately above the
+     180 mm printable height, do not "correct" it) and the bed cools to `--temp`;
+  2. a **release hold** of `--hold` seconds, nothing moving, so the part keeps
+     shrinking off the plate; then one short beep - the only warning that the
+     machine is about to move;
+  3. the **push**: the toolhead comes down off the plate in the back-left
+     corner, crosses at Z0.2 and rises only once it stands on a push line, then
+     the bed drives the part into it. One line per part, or per group of parts
+     within the blade's reach (50 mm blade x 0.25 overlap = 12.5 mm), left to
+     right, each at 70 % of the height of the *shortest* part it covers. By
+     default every line first works the part loose with **press-and-swipe
+     cycles** measured against the G-code (where the bumper, 30 mm ahead of
+     the nozzle, first meets plastic); `-s/--simplepush` is one straight shove;
+  4. the **sweep**: four strips across X at bed level (Z0.2), then a shove at
+     X83 to Y-5 that knocks the purge wall off the front lip;
+  5. on the last copy only, the head goes back to where an ordinary print of
+     that plate parks it (read out of the slicer's end code), and the slicer's
+     own reset and finish sound close the file.
+* **Keep-out corner.** The toolhead body overhangs `X 0-15, Y 150-180` when it
+  comes down, so a plate with material there is refused before any G-code is
+  written. The check walks the extruded moves themselves (arcs included), not
+  a bounding box.
 
 ## The looping profile
 
-Slice with the machine profile in `profiles/machine/PLP BBL A1 mini 0.4
-nozzle.json` — import it in OrcaSlicer via *Import Configs* — and the start
-G-code does its purging in a way that survives looping (see above). A plate
-sliced with the stock profile still builds; it just draws the stock purge lines
-on the front lip instead of the wall, and the same sweep move clears them.
+Import `profiles/a1mini/machine/PLP BBL A1 mini 0.4 nozzle.json` in OrcaSlicer
+(*Import Configs*); matching filament and process profiles sit next to it.
 
-The file to edit is `profiles/source/a1mini_start.gcode`, one command per line;
+The file to edit is `profiles/a1mini/source/start.gcode`, one command per line;
 the JSON is written from it by
 
 ```bash
 python profiles/build_profile.py
 ```
 
-(a JSON string cannot hold line breaks, which is why the two exist). The test
-suite fails if the JSON is stale. If you move or resize the wall there, the two
-numbers pylooprint uses to shove it off — `PURGE_WALL_X` and `PURGE_SWEEP_Y` in
-`printers/a1_mini.py` — have to follow. One rule for comments in that file: none
-may look like a slicer's layer-change marker (`; layer ...`, `;LAYER_CHANGE`,
-`; CHANGE_LAYER`, `;Z_HEIGHT` — the patterns in `LAYER_MARKER_RE`), because
-pylooprint splits a plate at the first one it meets after the start of the
-custom feature; a wall comment that did once ended the start code mid-wall and
-put the rest of the wall on the part list. The suite checks this too.
-
----
+The test suite fails while the JSON is stale. If the wall moves, `PURGE_WALL_X`
+/ `PURGE_SWEEP_Y` in `pylooprint/printers/a1mini/profile.py` have to follow. No
+comment in that file may look like a slicer layer marker (`; layer ...`,
+`;LAYER_CHANGE`, `; CHANGE_LAYER`, `;Z_HEIGHT`): the plate is split at the first
+one, and the rest of the wall would be taken for a part.
 
 ## Usage
 
@@ -254,70 +75,64 @@ put the rest of the wall on the part list. The suite checks this too.
 python -m pylooprint INPUT.gcode.3mf [-o OUTPUT.gcode.3mf] [-n LOOPS] [-t TEMP] ...
 ```
 
-Run it from this folder — there is nothing to install. If you would rather call
-it from anywhere as a bare `pylooprint` command, `python -m pip install -e .`
-puts it on your PATH while still running the files in this folder (undo with
-`python -m pip uninstall pylooprint`). Entirely optional.
-
-| Option | Default                         | Meaning |
-|---|---------------------------------|---|
-| `-n, --loops` | 1                               | how many copies |
-| `-t, --temp` | 26                              | bed temperature to cool down to before the push-off |
-| `--hold` | 400                             | A1/A1 Mini: seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
-| `-s, --simplepush` | off | A1/A1 Mini: push each part off with one straight shove instead of the default press-and-swipe cycles that work it loose first (the cycle is tuned by the `ZPUSH_*` constants in `printers/bedslinger.py`) |
-| `-p, --printer` | auto                            | `a1`, `a1mini`, `p1`, `x1` — overrides detection |
+| Option | Default | Meaning |
+|---|---|---|
+| `-n, --loops` | 1 | how many copies |
+| `-t, --temp` | 26 | bed temperature to cool down to before the push-off |
+| `--hold` | 400 | seconds to wait at the park height before the push-off beep (`0` skips the wait; the beep always sounds) |
+| `-s, --simplepush` | off | one straight shove per line instead of the press-and-swipe cycles (tuned by the `ZPUSH_*` constants in `printers/bedslinger.py`) |
+| `-p, --printer` | auto | `a1mini`; `a1` is a stub that refuses to build |
 | `-o, --output` | `<input>_looped_<n>x.gcode.3mf` | where to write the result |
-| `--dry-run` | off                             | report without writing |
+| `--dry-run` | off | report without writing |
 
-A file that already carries a Looprint watermark is refused — loop the original,
-not the output.
+A file that was already looped is refused - loop the original, not the output.
 
-Every run (including `--dry-run`) reports what it found on the plate and how it
-means to sweep it off, so both can be checked before an unattended batch starts:
+Every run reports what it found and what it will do, so both can be checked
+before an unattended batch:
 
 ```
 printer     : A1 Mini
 loops       : 1
 model height: 77.40 mm
-placement   : left (X 30.7..146.6)
+model box   : X 30.6..147.9  Y 9.6..103.8
 parts       : 3
   part 1    : X 8.9..97.6  Y 10.5..77.5  top Z 54.40  (88.7 x 67.0 mm)
   part 2    : X 76.2..103.8  Y 76.2..103.8  top Z 76.40  (27.7 x 27.7 mm)
   part 3    : X 120.6..171.4  Y 9.6..60.4  top Z 33.40  (50.8 x 50.8 mm)
 push plan   : 3 line(s), left to right (blade 50 mm, reach 12.5 mm)
-  line 1    : X 53.24  Z 38.08  (part 1)
-  line 2    : X 90.00  Z 53.48  (part 2)
-  line 3    : X 145.99  Z 23.38  (part 3)
+  line 1    : X 53.24  Z 38.08  contact Y 70.06  (part 1)
+  line 2    : X 90.00  Z 53.48  contact Y 124.14  (part 2)
+  line 3    : X 145.99  Z 23.38  contact Y 72.73  (part 3)
+push mode   : z-push, 8 cycles (approach 1.0, press 1.0, swipe 2.0 mm)
 ```
 
-Those X and Z values are the ones written into the G-code — the report and the
-push are planned by the same function, so they cannot drift apart.
+The X, Z and contact figures are the ones written into the G-code. Parts are
+found from the geometry: extruded moves within 2 mm of each other are one part,
+whatever the slicer's objects say; skirt, brim and prime tower are left out.
 
-The parts are found from the geometry, not from the slicer's object markers: the
-extruded moves are clustered, so a single object holding several separate bodies
-is reported as several parts — and, the other way round, two objects printed
-touching each other are one part, because that is what comes off the plate. Two
-lumps count as one only when the plastic itself is within 2 mm, so parts standing
-a few millimetres apart — which is how a plate is normally arranged — read as
-separate. The skirt, the brim and the prime tower are left out, because a
-loop drawn around everything would otherwise fuse the whole plate into one part.
+## Layout
 
-Arc moves (`G2`/`G3`, which the slicer emits when arc fitting is on) are followed
-around their curve. A round wall is a single arc whose two ends nearly meet, so
-reading it as a straight line would lose the part entirely — that applies to the
-eject keep-out check as much as to the part count.
-
-Example:
-
-```bash
-# twenty copies, ejecting each one, cooling to 26 C first
-python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -n 20 -o batch.gcode.3mf
-
-# one copy that dismounts itself, with a warmer release
-python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -t 28
+```
+pylooprint/
+  cli.py  pipeline.py  settings.py  errors.py
+  core/        printer-independent: open the 3MF, split the plate, find the parts,
+               plan the push, read the slicer's park, assemble the loops
+  printers/
+    base.py        PrinterProfile - what a machine has to provide
+    bedslinger.py  shared engine for machines whose bed moves in Y
+    detection.py   which printer a project was sliced for
+    a1mini/        the A1 Mini: profile.py + templates/
+    a1/            stub: registered, detected, refuses to build
+profiles/
+  build_profile.py           writes <printer>/source/start.gcode into the JSON
+  a1mini/{machine,filament,process,source}/
+tests/  test gcode/          sliced A1 Mini plates the suite runs on
 ```
 
----
+**Adding a printer:** a package under `printers/` subclassing `PrinterProfile`
+(or `BedSlingerProfile`), an entry in `printers/__init__.py`, its model id in
+`detection.py`, a folder under `profiles/`. `printers/a1/profile.py` lists what
+the A1 still needs.
 
 ## Tests
 
@@ -325,68 +140,18 @@ python -m pylooprint "A1mini_cube10_x3.gcode.3mf" -t 28
 python -m pytest
 ```
 
-The suite is anchored on two real reference files:
+* `test_core.py` - splitting a plate, reading arcs, assembling and signing loops.
+* `test_parts.py` - the part finder: the 2 mm rule, skirts, arcs, real plates.
+* `test_push_plan.py` - one line per part or band, heights, and that the blade
+  never descends at a new spot.
+* `test_zpush.py` - the press-and-swipe cycles and the measured contact.
+* `test_release_hold.py` - the hold moves nothing; the beep always sounds.
+* `test_purge_wall.py` - the shove that closes the sweep, at Z0.2.
+* `test_parking.py` - the last copy parks where an ordinary print would.
+* `test_eject_zone.py` - the keep-out corner, on synthetic and real plates.
+* `test_printers.py` - registry, detection, the A1 stub's refusal.
+* `test_profile.py` - the Orca profile is built from its source and says what
+  the code assumes about the wall.
+* `test_cli.py` - end-to-end runs and the report.
 
-* **`test_profile.py`** — the looping machine profile: the JSON is built from
-  the readable source, the wall block waits for temperature before extruding,
-  stands where the stock purge lines did, is nine 0.2 mm layers to 1.8 mm, runs
-  the fan the way the 0.2 mm profile does, and ends with the wipe; the sweep
-  constants agree with it; and nothing in the start code reads as a layer
-  marker, so `split_gcode` keeps the whole wall on the start-code side.
-* **`test_purge_wall.py`** — the shove that closes the sweep: after the last
-  strip, to the wall's middle, forward past the lip, then the usual return; the
-  A1, whose profile prints no wall, keeps its sweep unchanged.
-* **`test_inplace.py`** — the primary. Its reference is
-  `Gcode/test 2 blocks gcode/test 2 blocks mymod/Metadata/plate_1.gcode`, the
-  slicer output in `test 2 blocks/` patched by hand (air purges + spliced eject
-  sequence). pylooprint reproduces that file's **machine start and end code byte
-  for byte** from the unmodified slicer file; the loop scaffolding around it is
-  Looprint's. Also covers the purge patch, the carried-over Z-lift, the slow
-  align move and multi-loop repetition.
-* **`test_factorian_fallback.py`** — pins the fallback path: the generated A1
-  Mini end code is compared against the one embedded in `Gcode/result.gcode.3mf`
-  (byte for byte), and a CoreXY printer is shown to take the fallback and warn.
-* **`test_core.py` / `test_printers.py`** — unit coverage of the shared
-  machinery (config parsing, structure split, template engine, placement) and of
-  what each profile contributes (bed bounds, temp offset, push lanes, wiggle sweep).
-* **`test_eject_zone.py`** — the A1 Mini keep-out rule, against three real sliced
-  plates in `tests/test gcode/`: a full-plate cube that must be refused, a cube
-  shifted clear of the corner, and the plate whose bounding box covers the corner
-  while its material stays clear of it.
-* **`test_parking.py`** — the final park: read off the slicer's own end code,
-  emitted in the last loop only, lift before the relative drop, and after the
-  sweep but before the motors are switched off.
-* **`test_push_plan.py`** — the push planner: which parts share a line, that a
-  line pushes at the height of the shortest part it covers, that the lines run
-  left to right, and — walking the emitted moves — that the blade never descends
-  at a spot it has not already been to.
-* **`test_zpush.py`** — the press-and-swipe cycles, the default push: the four moves in order, the
-  2 mm of advance per cycle, Z back where it started each time, the approach that
-  stops short of the *measured* contact, and fewer cycles rather than moves past
-  the plate edge. The contact measurement itself — the bumper's band, the height
-  cut-off, a diagonal clipped to the band, a neighbour standing in the way — is in
-  `test_push_plan.py`.
-* **`test_parts.py`** — the part finder: parts standing close together, the skirt
-  that loops around all of them, travel moves crossing the gaps, and the two
-  in-repo plates, whose single part has to match the model's own bounding box.
-* **`test_release_hold.py`** — the wait and the push-off beep: that the block
-  never moves the machine, that every profile beeps before its eject sequence,
-  and that the beep survives `--hold 0`.
-* **`test_cli.py`** — end-to-end runs through the console entry point.
-
-Tests that need the sample files skip themselves if the `Gcode` folder is absent.
-
----
-
-## Known differences from the original
-
-* No web UI, no download counter, no Google Translate widget.
-* Plain `.gcode` input is not accepted — only `.gcode.3mf`. The original had a
-  second, subtly different code path for bare G-code; one path is easier to keep
-  correct.
-* No per-build tuning of the push-off (lane offset, push speed, print speed,
-  full-bed sweep, purge-free start, negative-Z release). Each one is either a
-  fixed value or dropped, so there is one code path per printer to keep correct.
-
-Credit for the automation concept: **Factorian Designs**. Original tool:
-**Nicki Andersen**, MIT.
+MIT.

@@ -13,8 +13,10 @@ import re
 
 from pylooprint.core.parts import PartBounds
 from pylooprint.printers import EndCodeContext, get_profile
-from pylooprint.printers.a1_mini import PURGE_SWEEP_Y, PURGE_WALL_X
+from pylooprint.printers.a1mini.profile import PURGE_SWEEP_Y, PURGE_WALL_X
 from pylooprint.settings import LoopSettings
+
+from conftest import a1mini_end_code
 
 SHOVE_MARKER = ";----- purge wall: off the front lip on the way back -----"
 
@@ -49,7 +51,7 @@ def test_the_shove_goes_past_the_wall_but_not_past_what_the_machine_reaches():
 
 
 def test_a_profile_without_a_wall_keeps_its_sweep():
-    """The A1's profile is not prepared; its sweep must not change."""
+    """The A1 stub prints no wall; its sweep carries no shove."""
     sweep = _sweep("a1")
 
     assert SHOVE_MARKER not in sweep
@@ -59,7 +61,7 @@ def test_a_profile_without_a_wall_keeps_its_sweep():
 
 def test_the_shove_is_in_the_end_code_of_every_loop():
     context = EndCodeContext(settings=LoopSettings(loops=1, cooldown_temp=23))
-    code = get_profile("a1mini").end_code(context)
+    code = a1mini_end_code(context)
 
     assert code.count(SHOVE_MARKER) == 1
     assert code.index(SHOVE_MARKER) < code.rindex("G1 Y185 F2000 ;move bed forward one last time")
@@ -70,7 +72,7 @@ def test_the_sweep_and_the_shove_run_at_the_travel_height():
     profile = get_profile("a1mini")
     part = PartBounds(45.0, 55.0, 60.0, 100.0, 0.2, 30.0)
     context = EndCodeContext(settings=LoopSettings(loops=1, cooldown_temp=23), parts=(part,))
-    code = profile.end_code(context)
+    code = a1mini_end_code(context)
 
     strips = code.index("G1 Y135 F2000")
     z_moves = re.findall(r"^G[01] Z([\d.]+)", code[:strips], flags=re.MULTILINE)

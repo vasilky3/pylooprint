@@ -1,15 +1,15 @@
-"""Splitting a sliced plate G-code into the parts a loop is built from.
+"""Splitting a sliced plate G-code into the pieces a loop is built from.
 
-Common to every printer.  A Bambu/Orca plate file looks like this::
+A Bambu/Orca plate file looks like this::
 
     ; HEADER_BLOCK_START ... ; HEADER_BLOCK_END
     ; CONFIG_BLOCK_START ... ; CONFIG_BLOCK_END
     ; EXECUTABLE_BLOCK_START
     <setup commands>
     ; FEATURE: Custom
-    <machine start G-code>          <- replaced or patched by the profile
+    <machine start G-code>          <- handed to the printer profile
     ; CHANGE_LAYER ... <the print>  <- repeated once per loop
-    ;===== date: ...                <- machine end G-code, replaced or patched
+    ;===== date: ...                <- machine end G-code, patched by the profile
 """
 
 from __future__ import annotations
@@ -28,11 +28,9 @@ from .constants import (
 
 _KEEP_COMMENT_RE = re.compile(r"; (CHANGE_LAYER|LAYER_CHANGE|layer num)", re.IGNORECASE)
 _LEFTOVER_TEMP_RE = re.compile(r"^M(104|109)\s+S140", re.IGNORECASE)
-_START_CODE_END_MARKER_RE = re.compile(r"; =+.*Start Code End.*=+", re.IGNORECASE)
 _M109_RE = re.compile(r"M109\s+S\d+", re.IGNORECASE)
 _FIRST_PRINT_AFTER_M109_RE = re.compile(r"(M73\s+P\d+|G1\s+X|G0\s+X|;LAYER|; layer)", re.IGNORECASE)
 _FIRST_PRINT_RE = re.compile(r"(M73\s+P\d+|G1\s+X|G0\s+X|G28|;LAYER|; layer)", re.IGNORECASE)
-_TOOL_RE = re.compile(r"T(\d+)")
 
 #: Fragments that suggest the slicer start code survived the split.
 _START_CODE_LEFTOVERS = ("G1 Z5 F300", "M17 X1.2 Y1.2 Z0.75", "G90\nM17 X1.2")
@@ -40,18 +38,12 @@ _START_CODE_LEFTOVERS = ("G1 Z5 F300", "M17 X1.2 Y1.2 Z0.75", "G90\nM17 X1.2")
 
 @dataclass(frozen=True)
 class GcodeStructure:
-    """The pieces a looped file is assembled from.
-
-    ``header``, ``config``, ``setup`` and ``print_body`` are reused as-is by
-    both strategies.  The two ``slicer_*`` fields hold the machine G-code that
-    the Factorian strategy discards and the in-place strategy patches.
-    """
+    """The pieces a looped file is assembled from."""
 
     header: str
     config: str
     setup: str
     print_body: str
-    original_tool_command: str | None
     #: Machine start G-code, between ``; FEATURE: Custom`` and the first layer.
     slicer_start_code: str = ""
     #: Machine end G-code, from the last ``;===== date:`` marker to the end.
@@ -77,12 +69,9 @@ def split_gcode(plate_gcode: str) -> GcodeStructure:
             config="",
             setup=gcode,
             print_body="",
-            original_tool_command=None,
             slicer_end_code=slicer_end_code,
             recognised=False,
         )
-
-    tool = extract_original_tool_command(gcode[executable_start:])
 
     header = gcode[:executable_start].strip()
     executable = gcode[executable_start:].strip()
@@ -100,7 +89,6 @@ def split_gcode(plate_gcode: str) -> GcodeStructure:
         config=config,
         setup=setup,
         print_body=print_body,
-        original_tool_command=tool,
         slicer_start_code=slicer_start_code,
         slicer_end_code=slicer_end_code,
     )
@@ -153,27 +141,3 @@ def _drop_leftover_start_code(layer_start: str) -> str:
             continue
         break
     return layer_start[offset:].strip()
-
-
-def extract_original_tool_command(executable: str) -> str | None:
-    """Recover the extruder index (``T0``..``T3``) used by the slicer start code.
-
-    Without this the loop would inherit ``T255`` from the end code's unload
-    sequence and the printer would refuse to extrude.
-    """
-    feature_index = executable.find(FEATURE_CUSTOM)
-    if feature_index == -1:
-        return None
-    after_feature = executable[feature_index + len(FEATURE_CUSTOM) :]
-
-    marker = _START_CODE_END_MARKER_RE.search(after_feature)
-    if marker:
-        start_code = after_feature[: marker.start()]
-    else:
-        layer_marker = LAYER_MARKER_RE.search(after_feature)
-        start_code = after_feature[: layer_marker.start()] if layer_marker else after_feature[:5000]
-
-    for match in _TOOL_RE.finditer(start_code):
-        if 0 <= int(match.group(1)) < 4:
-            return match.group(1)
-    return None

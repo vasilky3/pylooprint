@@ -3,7 +3,7 @@
 A bed slinger pushes by holding the toolhead still and driving the bed forward
 under it, so one push sweeps a band of X: everything whose centre is under the
 blade goes off the front.  A plate with one part needs one such line through its
-centre - which is all the push-off used to do - but a plate with several needs
+centre, but a plate with several needs
 one line per part, or per group of parts standing on the same band.
 
 Two numbers per machine decide the grouping: the width of the blade and how much
@@ -89,7 +89,7 @@ def plan_push_lines(
         lines.append(
             PushLine(
                 x=(group[0][0] + group[-1][0]) / 2,
-                z=_push_height(shortest, height_factor, min_model_height, min_z),
+                z=push_height(shortest, height_factor, min_model_height, min_z),
                 contact_y=None,
                 parts=tuple(sorted(number for _, number, _ in group)),
             )
@@ -164,6 +164,6 @@ def _centre(part: PartBounds) -> float:
     return (part.min_x + part.max_x) / 2
 
 
-def _push_height(top: float, factor: float, min_model_height: float, min_z: float) -> float:
-    """Where the blade meets a part that tall - the rule the templates used."""
+def push_height(top: float, factor: float, min_model_height: float, min_z: float) -> float:
+    """Where the blade meets a part that tall: a share of its height, or the floor."""
     return top * factor if top >= min_model_height else min_z

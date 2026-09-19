@@ -1,9 +1,8 @@
 """The contract every printer profile implements.
 
-Everything that is *common* lives in :mod:`pylooprint.core`; a profile only
-supplies what genuinely differs between machines - the start-code template, the
-end-code (push-off) sequence, the bed envelope, the cool-down handling and the
-temperature offset.
+Everything common lives in :mod:`pylooprint.core`; a profile supplies only what
+differs between machines - the bed envelope, how the parts are pushed off, and
+how the slicer's machine G-code is turned into one loop's start and end code.
 """
 
 from __future__ import annotations
@@ -11,21 +10,19 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from importlib import resources
-from typing import Mapping, Sequence
+from typing import Sequence
 
 from ..core.parking import SlicerPark
 from ..core.parts import PartBounds
 from ..core.push_plan import PushLine
 from ..core.structure import GcodeStructure
-from ..core.template import render_start_code
-from ..errors import LooprintError
 from ..settings import LoopSettings
 
-_TEMPLATE_PACKAGE = "pylooprint.printers.templates"
+_TEMPLATE_PACKAGE = "pylooprint.printers"
 
 #: Markers bracketing the pre-push beep, so it can be located in a finished file.
-BEEP_START = ";======= LOOPRINT RELEASE BEEP ======="
-BEEP_END = ";======= END LOOPRINT RELEASE BEEP ======="
+BEEP_START = ";======= PYLOOPRINT RELEASE BEEP ======="
+BEEP_END = ";======= END PYLOOPRINT RELEASE BEEP ======="
 
 
 @dataclass(frozen=True)
@@ -47,23 +44,15 @@ class MachineCode:
     #: The end code for the last loop, when it differs - the head parks there.
     #: ``None`` leaves every loop ending the same way.
     final_end_code: str | None = None
-    #: Notes for the user - e.g. that a profile fell back to the templates.
+    #: Notes for the user.
     warnings: tuple[str, ...] = field(default=())
 
 
 @dataclass(frozen=True)
 class EndCodeContext:
-    """What the end-code generator needs from the sliced file.
-
-    The model height and centre are *not* here: profiles emit
-    ``{max_layer_z ...}`` and ``{first_layer_center_no_wipe_tower[n]}`` verbatim
-    and the pipeline resolves them afterwards, exactly once, for every printer.
-    """
+    """What the end-code generator needs from the sliced file."""
 
     settings: LoopSettings
-    #: Model bounding box, when placement detection produced one.
-    model_min_x: float | None = None
-    model_max_x: float | None = None
     #: The separate parts on the plate, in report order.  Empty when the body
     #: could not be measured, which sends the push-off back to its one-line form.
     parts: tuple[PartBounds, ...] = ()
@@ -73,31 +62,34 @@ class EndCodeContext:
     #: Where an ordinary print of this plate would leave the head, read out of
     #: the slicer's own end code.  ``None`` when that file is shaped otherwise.
     slicer_park: SlicerPark | None = None
-    #: Side of the bed the model sits on: ``left`` / ``center`` / ``right``.
-    direction: str = "center"
+    #: Height of the tallest thing printed, from the file header.
+    model_height: float = 0.0
+    #: X of the middle of everything printed - where the one-line push aims when
+    #: the parts are unknown.
+    centre_x: float = 0.0
 
 
-def load_template(name: str) -> str:
-    """Read a G-code template shipped with the package."""
-    return resources.files(_TEMPLATE_PACKAGE).joinpath(name).read_text(encoding="utf-8")
+def load_template(relative_path: str) -> str:
+    """Read a G-code template shipped inside :mod:`pylooprint.printers`."""
+    return resources.files(_TEMPLATE_PACKAGE).joinpath(relative_path).read_text(encoding="utf-8")
 
 
 class PrinterProfile(ABC):
-    """A single printer family."""
+    """A single printer family.
 
+    Adding a printer: a package under ``printers/`` with a subclass of this (or
+    of :class:`~pylooprint.printers.bedslinger.BedSlingerProfile` for a machine
+    whose bed moves in Y), one entry in the registry in ``printers/__init__.py``,
+    its model id in ``detection.py``, and a looping Orca profile under
+    ``profiles/<key>/``.  ``printers/a1/`` is the stub to start from.
+    """
+
+    #: CLI name (``--printer a1mini``).
     key: str
     name: str
     #: ``printer_model_id`` values found in ``Metadata/slice_info.config``.
     model_ids: tuple[str, ...] = ()
     bed_bounds: BedBounds
-    #: Difference between the requested and the commanded bed temperature.
-    temp_offset: int = 0
-    #: How many ``M190`` lines are needed to outlast the firmware's wait timeout.
-    m190_repeat: int = 1
-    #: Start-code template shipped for this machine, rendered by the default
-    #: :meth:`build_machine_code`.  ``None`` for a profile that keeps the
-    #: slicer's own start code instead and never renders one.
-    start_template_name: str | None = None
     #: The blade that pushes a part off: how wide the toolhead sweeps, in mm,
     #: and how much of that width has to sit over a part to carry it.  Their
     #: product is how far from a line a part may stand and still be pushed.
@@ -105,31 +97,16 @@ class PrinterProfile(ABC):
     blade_overlap: float
 
     def apply_temp_offset(self, temp: int) -> int:
-        """Bed temperature to actually command for a requested cool-down temp."""
+        """Bed temperature to command for a requested cool-down temperature."""
         return temp
-
-    def cooldown_block(self, temp: int) -> str:
-        """The repeated ``M190`` wait that holds the print until it releases."""
-        return "\n".join([f"M190 S{self.apply_temp_offset(temp)}"] * self.m190_repeat)
-
-    def start_code(self) -> str:
-        """Raw start-code template, before variable substitution."""
-        if self.start_template_name is None:
-            raise LooprintError(
-                f"{self.name} keeps the slicer's own start code and has no template to render"
-            )
-        return load_template(self.start_template_name)
 
     def release_beep(self) -> str:
         """One short tone, emitted immediately before the push-off.
 
-        Every profile uses it: the machine has been standing still through the
-        cool-down, so the beep is the only warning that it is about to move
-        again and throw the part off the plate.
-
-        ``M1006`` is the same tone macro the slicer's own finish sound uses -
-        one note instead of a tune.  A firmware that does not know it ignores
-        the block, which costs nothing but the sound.
+        The machine has been standing still through the cool-down, so the beep
+        is the only warning that it is about to move again and throw the part
+        off the plate.  ``M1006`` is the tone macro the slicer's own finish
+        sound uses.
         """
         return "\n".join(
             [
@@ -142,30 +119,12 @@ class PrinterProfile(ABC):
             ]
         )
 
-    @abstractmethod
-    def end_code(self, context: EndCodeContext) -> str:
-        """Cool-down and push-off sequence appended after every loop."""
-
-    def final_end_code(self, context: EndCodeContext) -> str | None:
-        """The end code for the last loop, when this profile ends it differently.
-
-        ``None`` - the default - leaves every loop ending the same way.  A
-        profile that parks the head once the job is done returns that version
-        here instead of putting the park after every copy.
-        """
-        return None
-
-    def end_code_warnings(self, context: EndCodeContext) -> tuple[str, ...]:
-        """Notes the end-code generator produced - e.g. auto-adjusted push lanes."""
-        return ()
-
     def push_plan(self, parts: Sequence[PartBounds], print_body: str = "") -> list[PushLine]:
         """The lines the blade runs to sweep this plate, left to right.
 
-        Empty for a profile whose push-off does not follow the parts - the
-        CoreXY machines still push through the plate centre in three fixed
-        lanes.  Called once per build: the plan is reported and carried in the
-        context, so the report and the G-code cannot describe different pushes.
+        Called once per build: the plan is reported and carried in the context,
+        so the report and the G-code cannot describe different pushes.  Empty
+        for a profile whose push-off does not follow the parts.
 
         ``print_body`` lets a profile measure against the G-code itself rather
         than against the parts' boxes; it is only handed over when something in
@@ -176,33 +135,15 @@ class PrinterProfile(ABC):
     def check_eject_clearance(self, print_body: str) -> None:
         """Refuse the build if the model fouls this printer's eject sequence.
 
-        The default accepts anything, because pushing a part off with the
-        gantry never brings the toolhead down onto the plate.  A profile whose
-        eject sequence *does* descend onto the plate overrides this and raises
+        The default accepts anything.  A profile whose eject sequence brings
+        the toolhead down onto the plate overrides this and raises
         :class:`~pylooprint.errors.UnsafeEjectZoneError`.
         """
 
-    def build_machine_code(
-        self,
-        structure: GcodeStructure,
-        context: EndCodeContext,
-        values: Mapping[str, object],
-    ) -> MachineCode:
+    @abstractmethod
+    def build_machine_code(self, structure: GcodeStructure, context: EndCodeContext) -> MachineCode:
         """Produce the start and end code that wrap one loop.
 
-        This default throws the slicer's machine G-code away and substitutes
-        this profile's templates, which is what the original web tool does.  It
-        works for any printer but loses whatever the printer profile configured
-        - flow calibration, bed levelling, build-plate detection.
-
-        A profile that can instead *patch* the slicer's own machine G-code
-        overrides this and uses ``structure.slicer_start_code`` /
-        ``structure.slicer_end_code``; see :class:`~pylooprint.printers.a1_mini.A1MiniProfile`.
+        ``structure.slicer_start_code`` / ``structure.slicer_end_code`` are the
+        slicer's own machine G-code; the profile decides what to keep of them.
         """
-        return MachineCode(
-            start_code=render_start_code(self.start_code(), values),
-            end_code=self.end_code(context),
-            final_end_code=self.final_end_code(context),
-            warnings=(f"{self.name} has no in-place machine G-code yet; using the Factorian templates",)
-            + self.end_code_warnings(context),
-        )

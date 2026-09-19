@@ -20,6 +20,8 @@ from pylooprint.printers import EndCodeContext, get_profile
 from pylooprint.printers.bedslinger import PARK_END, PARK_START
 from pylooprint.settings import LoopSettings
 
+from conftest import a1mini_end_code
+
 #: The shape of a Bambu end code, down to the indentation of the lift.
 END_CODE = """M400 ; wait all motion done
 M17 S
@@ -128,14 +130,14 @@ def test_the_park_height_follows_the_plate(suitable_project):
     assert "G1 Z180 F600" in block
 
 
-def test_the_template_path_parks_too():
-    """The A1 has no in-place patches yet, but its end code still parks."""
-    park = SlicerPark(lift="G1 Z131.8 F600", moves="G90\nG1 X-48 Y262 F3600\nM83")
+def test_the_park_is_spliced_in_before_the_finish_sound():
+    park = SlicerPark(lift="G1 Z131.8 F600", moves="G90\nG1 X-13 Y180 F3600\nM83")
     settings = LoopSettings(loops=1, cooldown_temp=23)
-    profile = get_profile("a1")
+    profile = get_profile("a1mini")
+    context = EndCodeContext(settings=settings, slicer_park=park)
 
-    parked = profile.final_end_code(EndCodeContext(settings=settings, slicer_park=park))
-    assert "G1 X-48 Y262 F3600" in parked
+    parked = a1mini_end_code(context, park=profile.final_park(context))
+    assert "G1 X-13 Y180 F3600" in parked
     assert parked.index(PARK_START) < parked.index(";=====printer finish  sound=========")
 
 
@@ -144,8 +146,8 @@ def test_without_a_park_the_last_loop_ends_like_the_others():
     profile = get_profile("a1mini")
     context = EndCodeContext(settings=settings)
 
-    assert profile.final_end_code(context) is None
-    assert PARK_START not in profile.end_code(context)
+    assert profile.final_park(context) == ""
+    assert PARK_START not in a1mini_end_code(context)
 
 
 def test_the_park_is_not_in_the_other_loops(cone_multi_project):
