@@ -19,7 +19,7 @@
 	"skin_infill_density": "20%",
 	"small_perimeter_speed": "30",
 	"small_perimeter_threshold": "2",
-	"sparse_infill_density": "10%",
+	"sparse_infill_density": "6%",
 	"support_on_build_plate_only": "1",
 	"top_shell_layers": "3",
 	"version": "2.1.0.19"

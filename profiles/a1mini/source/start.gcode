@@ -416,6 +416,7 @@ M623 ; end of "draw extrinsic para cali paint"
 ; pylooprint splits the file at the first one and would take the rest of the
 ; wall for a part.  See LAYER_MARKER_RE in pylooprint/core/constants.py.
 M109 S{nozzle_temperature_initial_layer[initial_extruder]} ; first-layer temperature, before anything is extruded
+M106 S255 ; fan for air purge
 G1 E30 F200 ; air purge over the chute - the head is at X-13.5 Z10
 M400
 M106 S0 ; first pass without fan, as the 0.2 mm profile prints its first layer

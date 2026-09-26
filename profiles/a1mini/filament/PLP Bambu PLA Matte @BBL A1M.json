@@ -6,7 +6,7 @@
 		"Direct Drive Standard"
 	],
 	"filament_flow_ratio": [
-		"1.02"
+		"0.995"
 	],
 	"filament_settings_id": [
 		"PLP Bambu PLA Matte @BBL A1M"
@@ -21,7 +21,7 @@
 	"inherits": "Bambu PLA Matte @BBL A1M",
 	"name": "PLP Bambu PLA Matte @BBL A1M",
 	"nozzle_temperature_initial_layer": [
-		"228"
+		"225"
 	],
 	"pressure_advance": [
 		"0.025"
